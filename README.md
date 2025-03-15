@@ -54,7 +54,7 @@ For reading an archive from an unseekable stream, or for reading the contents of
 
 ## Spec
 
-All integers are in little-endian byte order, meaning the integer 0x12345678 is encoded as the bytes 0x78 0x56 0x34 0x12.
+All integers are unsigned and in little-endian byte order, meaning the integer 0x12345678 is encoded as the bytes 0x78 0x56 0x34 0x12.
 
 The existence, order, and size of every structure and field specified in this specification is normative.
 There is never any padding or unused space between specified structures or fields.
@@ -184,7 +184,7 @@ or at the start of an item;
 if streaming is supported, the start of an item is a `DataItem` (a `DataItem.item_magic_number`),
 otherwise it is the first byte of the item's file contents.
 
-If the index is present and the compression method is not None,
+If the index is present and the compression method is not None, TODO.
 For each data item at the start of a compression stream, the corresponding `IndexItem.data_item_offset` must be non-zero.
 If the compression method is None, then every data item is considered at the start of a compression stream.
 
@@ -277,6 +277,8 @@ struct ArchiveFooter = {
 ```
 
 A reader wishing to list the contents of the archive without decompressing the Data Region may start at the end here and decompress only the Index Region.
+
+TODO: we probably need some kind of index footer metadata to store a checksum for the index.
 
 ### Field details
 
