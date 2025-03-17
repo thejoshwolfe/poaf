@@ -118,8 +118,6 @@ class Writer:
         header_metadata = b''
 
         # Write header.
-        if self.flags.index():
-            previous_stream_compressed_size = self._maybe_split_stream()
         if self.flags.streaming():
             self._write(
                 item_signature +
@@ -133,6 +131,8 @@ class Writer:
             )
 
         # Write contents.
+        if self.flags.index():
+            previous_stream_compressed_size = self._maybe_split_stream()
         with open(input_path, "rb") as f:
             buf_size = 0x4000
             while True:

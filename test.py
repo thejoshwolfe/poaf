@@ -36,14 +36,22 @@ def main():
                 with tempfile.TemporaryDirectory() as d:
                     cmd = ["./read.py", archive_path, "--extract", d]
                     subprocess.run(cmd, check=True)
-
-                    found_files = os.listdir(d)
-                    assert set(found_files) == set(file_names)
-                    for name in file_names:
-                        assert read_file(name) == read_file(os.path.join(d, name)), name
+                    assert_dir(d, file_names)
 
             # Extract random access
-            # TODO
+            if "--no-index" not in options:
+                with tempfile.TemporaryDirectory() as d:
+                    # Extract each item in individual calls.
+                    for name in reversed(file_names):
+                        cmd = ["./read.py", archive_path, "--extract", d, name]
+                        subprocess.run(cmd, check=True)
+                    assert_dir(d, file_names)
+
+def assert_dir(d, file_names):
+    found_files = os.listdir(d)
+    assert set(found_files) == set(file_names)
+    for name in file_names:
+        assert read_file(name) == read_file(os.path.join(d, name)), name
 
 def read_file(path):
     with open(path, "rb") as f:

@@ -292,38 +292,44 @@ All fields present in both structs (`name_size`, `header_metadata_size`, `file_s
 must exactly match between each `IndexItem` and the corresponding `DataItem`.
 
 If `previous_stream_compressed_size` is non-zero, it means the Data Region is split into multiple streams,
-and a stream with the given size in the archive (after compression) ends just before a new stream starts that starts with the `DataItem` corresponding to this `IndexItem`.
+and a stream with the given size in the archive (after compression) ends just before a new stream starts that starts with the `DataItem.file_contents` corresponding to this `IndexItem`.
 This field exists to enable a reader to jump into the middle of the archive and decompress specific items without needing to decompress all items leading up to it.
-An archive creator may set the `previous_stream_compressed_size` to 0 if there is no stream split at the corresponding `DataItem`; see Data Region for more details.
+An archive creator may set the `previous_stream_compressed_size` to 0 if there is no stream split in the corresponding `DataItem`; see Data Region for more details.
 
-A reader can use the below pseudocode to compute the `offset` and `skip_bytes` to jump into the middle of an archive:
+A reader can use the below pseudocode to compute the `stream_start_offset` and `skip_bytes` to jump into the middle of an archive for any item:
 
 ```
-// Precompute offset and skip_bytes for all index items:
-let offset = sizeof(ArchiveHeader) // The start of the Data Region
-let skip_bytes = 0
+// Precompute stream_start_offset and skip_bytes for all index items:
+let stream_start_offset = sizeof(ArchiveHeader) // The start of the Data Region
+let skip_bytes = sizeof(DataRegionArchiveMetadata) // The first thing in the stream
 for each index_item:
+    // offset represents the start of the current
     if index_item.previous_stream_compressed_size > 0:
-        offset += index_item.previous_stream_compressed_size
+        stream_start_offset += index_item.previous_stream_compressed_size
         skip_bytes = 0
     else:
-        skip_bytes += sizeof(the DataItem corresponding to index_item)
-    index_item.offset = offset
+        if Streaming is enabled:
+            // Skip the corresponding StreamingItem's fields before file_contents.
+            skip_bytes += 16 + index_item.name_size + index_item.header_metadata_size
+    index_item.stream_start_offset = stream_start_offset
     index_item.skip_bytes = skip_bytes
+    // For the next item, skip the file_contents of this item.
+    skip_bytes += index_item.file_size
+    if Streaming is enabled:
+        // Also skip the corresponding StreamingItem's fields after file_contents.
+        skip_bytes += checksums_size // Determined by the ArchiveHeader.
 
 // Jump to a specific item.
 let index_item = the item to jump to.
-seek to index_item.offset in the archive file.
+seek to index_item.stream_start_offset in the archive file.
 read and decompress until index_item.skip_bytes decompressed bytes have been read.
-// The decompression stream is now positioned at the corresponding DataItem.
+// The decompression stream is now positioned at the corresponding DataItem.file_contents.
 ```
 
-Note that the size of the `DataItem` corresponding to an `IndexItem` can be computed without needing to read the Data Region,
-because the fields in common between the two structures must exactly match.
-
-If Compression Method is None, then the first `previous_stream_compressed_size` must be the size of the Data Region `ArchiveMetadata`, and every subsequent `previous_stream_compressed_size` must be the size of the `DataItem` corresponding to the previous `IndexItem`.
-Note that in the special case that Streaming is disabled and Compression Method is None and the previous `IndexItem` has a `file_size` of 0,
-then `previous_stream_compressed_size` will be 0.
+If Compression Method is None, then the first `previous_stream_compressed_size` must be the size of the `DataRegionArchiveMetadata`, which might be 0,
+and every subsequent `previous_stream_compressed_size` must be the size of the `DataItem` corresponding to the previous `IndexItem`.
+Note that when Compression Method is None, `previous_stream_compressed_size` can be 0 in some cases,
+but `skip_bytes` (computed by the above pseudocode) will never be greater than zero.
 
 #### Archive Footer
 
