@@ -14,7 +14,7 @@ def main():
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--no-index", action="store_const", const=STRUCTURE_STREAM_ONLY, dest="structure", default=STRUCTURE_BOTH, help=
         "Optimize the archive for streaming reading, omitting the Index Region.")
-    group.add_argument("--no-inline", action="store_const", const=STRUCTURE_INDEX_ONLY, dest="structure", help=
+    group.add_argument("--no-streaming", action="store_const", const=STRUCTURE_INDEX_ONLY, dest="structure", help=
         "Optimize the archive for random-access in-place reading, omitting the inline metadata in the Data Region.")
 
     group = parser.add_mutually_exclusive_group()
@@ -25,13 +25,8 @@ def main():
     group.add_argument("-0", action="store_const", const="none", dest="compress", help=
         "Equivalent to --compress=none.")
 
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--checksum", choices=["none", "crc32", "sha256"], default="none", help=
-        "Specify the checksum algorithm. Default is --checksum=none.")
-    group.add_argument("--crc32", action="store_const", const="crc32", dest="checksum", help=
-        "Equivalent to --checksum=crc32.")
-    group.add_argument("--sha256", action="store_const", const="sha256", dest="checksum", help=
-        "Equivalent to --checksum=sha256.")
+    parser.add_argument("--crc32", action="store_true")
+    parser.add_argument("--sha256", action="store_true")
 
     parser.add_argument("-b", "--backup", action="store_true", help=
         "Include extended file system metadata suitable for backups.")
@@ -47,10 +42,15 @@ def main():
 
     args = parser.parse_args()
 
+    flags = FeatureFlags.from_values(
+        compression_method=args.compress,
+        structure         =args.structure,
+        crc32             =args.crc32,
+        sha256            =args.sha256,
+    )
+
     with Writer(
-        structure=args.structure,
-        compression=args.compress,
-        checksum=args.checksum,
+        flags=flags,
         is_backup=args.backup,
         root=args.root,
         output_path=args.output,
@@ -59,42 +59,45 @@ def main():
             writer.add(file)
 
 class Writer:
-    def __init__(self, structure, compression, checksum, is_backup, root, output_path):
-        self.structure = structure
-        self.compression = compression
-        self.checksum = checksum
+    def __init__(self, flags, is_backup, root, output_path):
+        self.flags = flags
         self.is_backup = is_backup
         self.root = root
 
-        if compression != COMPRESSION_DEFLATE: raise NotImplementedError
-        if checksum != "none": raise NotImplementedError
+        if self.flags.compression_method() != COMPRESSION_DEFLATE: raise NotImplementedError
+        if self.flags.crc32() or self.flags.sha256(): raise NotImplementedError
         if is_backup: raise NotImplementedError
+        self.checksums_size = 0
 
-        self._compressor = Compressor()
+        archive_metadata = b'\x00\x00'
 
         self._output = open(output_path, "wb")
         try:
-            self._output.write(structure_and_compression_to_archive_magic_number[(self.structure, self.compression)])
-            if self.includes_stream_metadata():
-                pass # TODO: ArchiveMetadata
+            # ArchiveHeader
+            archive_header = archive_signature + bytes([self.flags.flags])
+            assert len(archive_header) == archive_header_size
+            self._output.write(archive_header)
 
-            if self.includes_index_metadata():
-                self.flush_threshold = 0x10000
-                self._written_since_last_optional_flush = 0
+            # Data Region
+            self._start_stream()
+            if self.flags.streaming():
+                # ArchiveMetadata
+                self._write(archive_metadata)
+
+            if self.flags.index():
+                self.stream_split_threshold = 0x10000
                 # Start the index
                 self._index_tmpfile = tempfile.TemporaryFile()
                 try:
                     self._index_compressor = Compressor()
-                    pass # TODO: ArchiveMetadata
+                    # ArchiveMetadata
+                    self._write_to_index(archive_metadata)
                 except:
                     self._index_tmpfile.close()
                     raise
         except:
             self._output.close()
             raise
-
-    def includes_stream_metadata(self): return self.structure != STRUCTURE_INDEX_ONLY
-    def includes_index_metadata(self):  return self.structure != STRUCTURE_STREAM_ONLY
 
     def __enter__(self):
         return self
@@ -113,19 +116,17 @@ class Writer:
         if not stat.S_ISREG(st.st_mode): raise NotImplementedError("TODO: non-file: " + input_path)
         file_size = st.st_size
         header_metadata = b''
-        footer_metadata_size = 0
 
         # Write header.
-        if self.includes_index_metadata():
-            offset = self._optional_flush()
-        if self.includes_stream_metadata():
+        if self.flags.index():
+            previous_stream_compressed_size = self._maybe_split_stream()
+        if self.flags.streaming():
             self._write(
-                item_magic_number +
-                struct.pack("<HHQB",
+                item_signature +
+                struct.pack("<HHQ",
                     len(name),
                     len(header_metadata),
                     file_size,
-                    footer_metadata_size,
                 ) +
                 name +
                 header_metadata
@@ -139,66 +140,74 @@ class Writer:
                 if len(buf) == 0: break
                 self._write(buf)
 
-        # Write footer.
-        footer_metadata = b''
-        assert len(footer_metadata) == footer_metadata_size
-        if self.includes_stream_metadata():
-            self._write(footer_metadata)
+        # Write checksums.
+        checksums = b''
+        assert len(checksums) == self.checksums_size
+        if self.flags.streaming():
+            self._write(checksums)
 
         # Write index
-        if self.includes_index_metadata():
+        if self.flags.index():
+            # IndexItem
             self._write_to_index(
-                struct.pack("<QHHQB",
-                    offset,
+                checksums +
+                struct.pack("<QHHQ",
+                    previous_stream_compressed_size,
                     len(name),
                     len(header_metadata),
                     file_size,
-                    footer_metadata_size,
                 ) +
                 name +
-                header_metadata +
-                footer_metadata
+                header_metadata
             )
 
     def close(self):
         # DataRegionSentinel
         self._write(
-            item_magic_number +
+            item_signature +
             struct.pack("<HHQ", 0, 0, 0)
         )
         self._output.write(self._compressor.flush())
         self._compressor = None
 
-        if self.includes_index_metadata():
+        if self.flags.index():
             # Index Region.
-            index_offset = self._output.tell()
+            data_region_compressed_size = self._output.tell() - archive_header_size
             self._index_tmpfile.write(self._index_compressor.flush())
             self._index_compressor = None
             self._index_tmpfile.seek(0)
             shutil.copyfileobj(self._index_tmpfile, self._output)
             self._index_tmpfile.close()
 
-            # Write footer.
+            # ArchiveFooter.
+            checksums = b''
+            assert len(checksums) == self.checksums_size
             self._output.write(
-                struct.pack("<Q", index_offset) +
-                footer_magic_number
+                checksums +
+                struct.pack("<Q", data_region_compressed_size) +
+                footer_signature
             )
         # Done
         self._output.close()
 
     def _write(self, buf):
-        out_buf = self._compressor.compress(buf)
-        self._output.write(out_buf)
-        if self.includes_index_metadata():
-            self._written_since_last_optional_flush += len(out_buf)
+        self._output.write(self._compressor.compress(buf))
     def _write_to_index(self, buf):
         self._index_tmpfile.write(self._index_compressor.compress(buf))
-    def _optional_flush(self):
-        if self._written_since_last_optional_flush < self.flush_threshold: return 0
+
+    def _maybe_split_stream(self):
+        if self._output.tell() - self._stream_start < self.stream_split_threshold:
+            # Too small to split yet.
+            return 0
+        # Split the stream.
         self._output.write(self._compressor.flush())
+        previous_stream_compressed_size = self._output.tell() - self._stream_start
+        self._start_stream()
+        return previous_stream_compressed_size
+    def _start_stream(self):
         self._compressor = Compressor()
-        self._written_since_last_optional_flush = 0
-        return self._output.tell()
+        if self.flags.index():
+            self._stream_start = self._output.tell()
 
 def Compressor():
     return zlib.compressobj(wbits=-zlib.MAX_WBITS)

@@ -1,15 +1,61 @@
 
 import os, re
 
-archive_magic_number_nostream_index_nocompress = b'\xbe\xf6\xfc\xd0' # 0xD0FCF6BE
-archive_magic_number_stream_noindex_nocompress = b'\xbe\xf6\xfc\xe0' # 0xE0FCF6BE
-archive_magic_number_stream_index_nocompress   = b'\xbe\xf6\xfc\xf0' # 0xF0FCF6BE
-archive_magic_number_nostream_index_deflate    = b'\xbe\xf6\xfc\xd1' # 0xD1FCF6BE
-archive_magic_number_stream_noindex_deflate    = b'\xbe\xf6\xfc\xe1' # 0xE1FCF6BE
-archive_magic_number_stream_index_deflate      = b'\xbe\xf6\xfc\xf1' # 0xF1FCF6BE
+archive_signature = b'\xbe\xf6\xfc'     # 0xFCF6BE
+item_signature    = b'\xdc\xac\xa9\xdc' # 0xDCA9ACDC
+footer_signature  = b'\xb6\xee\xe9\xcf' # 0xCFE9EEB6
 
-item_signature   = b'\xdc\xac\xa9\xdc'
-footer_signature = b'\xb6\xee\xe9\xcf'
+archive_header_size = 4
+
+# Feature flags
+class UnsupportedFeatureError(Exception): pass
+class FeatureFlags:
+    def __init__(self, flags):
+        if bool(flags & 0xC0): raise UnsupportedFeatureError("feature flags")
+        compression_method = (flags & 0x03)
+        if compression_method not in (0, 1): raise UnsupportedFeatureError("compression method: " + str(compression_method))
+        if (flags & 0x0C) == 0: raise UnsupportedFeatureError("no structure")
+        self.flags = flags
+
+    @staticmethod
+    def from_values(
+        compression_method,
+        structure,
+        crc32,
+        sha256,
+    ):
+        return FeatureFlags(
+            {
+                COMPRESSION_NONE:    0x00,
+                COMPRESSION_DEFLATE: 0x01,
+            }[compression_method] |
+            {
+                STRUCTURE_STREAM_ONLY: 0x04,
+                STRUCTURE_INDEX_ONLY:  0x08,
+                STRUCTURE_BOTH:        0x0C,
+            }[structure] |
+            (0x10 if crc32  else 0) |
+            (0x20 if sha256 else 0) |
+            0
+        )
+
+    def compression_method(self):
+        value = self.flags & 0x03
+        if value == 0: return COMPRESSION_NONE
+        if value == 1: return COMPRESSION_DEFLATE
+        assert False, "call validate_flags() first"
+    def streaming(self): return bool(self.flags & 0x04)
+    def index(self):     return bool(self.flags & 0x08)
+    def crc32(self):     return bool(self.flags & 0x10)
+    def sha256(self):    return bool(self.flags & 0x20)
+
+    def checksums_size(self):
+        checksums_size = 0
+        if self.crc32():
+            checksums_size += 4
+        if self.sha256():
+            checksums_size += 32
+        return checksums_size
 
 STRUCTURE_BOTH = "both"
 STRUCTURE_STREAM_ONLY = "stream-only"
@@ -18,17 +64,8 @@ STRUCTURE_INDEX_ONLY = "index-only"
 COMPRESSION_NONE = "none"
 COMPRESSION_DEFLATE = "deflate"
 
-structure_and_compression_to_archive_magic_number = {
-    (STRUCTURE_INDEX_ONLY,  COMPRESSION_NONE):    archive_magic_number_nostream_index_nocompress,
-    (STRUCTURE_STREAM_ONLY, COMPRESSION_NONE):    archive_magic_number_stream_noindex_nocompress,
-    (STRUCTURE_BOTH,        COMPRESSION_NONE):    archive_magic_number_stream_index_nocompress,
-    (STRUCTURE_INDEX_ONLY,  COMPRESSION_DEFLATE): archive_magic_number_nostream_index_deflate,
-    (STRUCTURE_STREAM_ONLY, COMPRESSION_DEFLATE): archive_magic_number_stream_noindex_deflate,
-    (STRUCTURE_BOTH,        COMPRESSION_DEFLATE): archive_magic_number_stream_index_deflate,
-}
 
-archive_magic_number_to_structure_and_compression = {v: k for k, v in structure_and_compression_to_archive_magic_number.items()}
-
+# Paths
 class InvalidArchivePathError(Exception): pass
 def validate_archive_path(archive_path):
     # Canonicalize slash direction.
