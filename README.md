@@ -1,22 +1,116 @@
-# cimabafiaw
+# poaf
 
-Can I make a better archive format in a weekend?
+A pretty OK archive format.
 
-I'm frustrated by the design of both ZIP and TAR, and I want to see how hard it is to make something better.
-I'm giving myself 1 weekend (until I edit this restriction) to see how far I can get.
+I'm frustrated by the design of both ZIP and TAR, and I want to see how hard it is to make something better from scratch in 2025.
 
-This archive format is trying to solve every use case that ZIP, TAR, and TAR+Compression (`.tar.gz` for example) solve in a modern context:
+This archive format is trying to solve every write-once use case that other archive formats solve, including `.zip`, `.tar`, `.tar.gz`, `.a`, `.deb`, etc.
+Use cases that involve making incremental modifications to an existing archive file are out of scope; I would say that's more akin to a database or file system format rather than an archive format.
+
+This format is not necessarily recommended in a context where widespread adoption is meaningfully beneficial, as this is a new format as of 2025.
+But that's how innovation works, so if you're still reading this, thanks for taking the time to check out this project!
+
+The intended applications of this archive format are what are currently solved by ZIP and TAR:
 * Packaging content for wide distribution. e.g. Making a highly compressed release tarball.
-* Packaging content on the fly for download. e.g. Downloading git repo as archive.
-* Backing up a directory and preserving extended metadata. e.g. Encoding the "System" file attribute on Windows.
-* Reading a compressed directory in-place. e.g. Extracting individual files from a .jar, .docx, .apk, etc.
+* Packaging content on the fly for download. e.g. Downloading a snapshot of a git repo as archive.
+* Backing up a directory and preserving OS-specific metadata.
+* Reading a compressed directory in-place. e.g. Extracting individual files from a `.jar`, `.docx`, `.apk`, etc.
 * Transferring ephemeral information directly between software programs. e.g. Sending a build context to the docker daemon.
 
 See also What's Wrong With ZIP/TAR? below.
 
-TODO: replace `+---+` tables with commonmark `|---|` tables.
+## Terminology
+
+An archive is a file containing multiple items.
+An item has a name and contents, each a sequence of bytes, and possibly other metadata.
+
+The items are the primary payload of the archive.
+For example, an archive containing items named `README.md` and `LICENSE.md` would be typical for archiving a software project.
+The contents of these items would the text of the documents.
+
+While items typically correspond to files on a file system outside the archive, it is out of scope of this format specification to define the implementation details of how item data is provided during the creation of an archive or how it is used when reading an archive.
+Instead, this format specification places constraints on what kind of information must be or can be known at certain times throughout the creation and reading of an archive while maintaining an upper bound on the required general-purpose memory.
+For example, an item can be provide to the archive creation process with either known or unknown size of contents.
+Another example is a reader can sometimes get a list of item names before being required to process the contents of the items.
+See the Features section for more details.
+
+The input to the process of creating an archive is a sequence of items, not necessarily all at once.
+The input to the process of reading an archive is the archive.
+
+A file is a sequence of bytes.
+A byte is 8 bits.
+
+A file can be used in one of the following modes:
+* An unseekable read stream: Each byte of the file must be read once from start to finish. Once a byte has been read, it cannot be read again.
+* A random-access file (for reading): Each byte can be read zero or more times in any order. The reader can seek to an arbitrary offset.
+* An unseekable write stream: Each byte of the output file must be written once from start to finish. Once a byte has been written, it cannot be changed.
+* A random-access file (For writing): Each byte must be written in sequence from start to finish, but a writer may seek backward and overwrite earlier bytes before resuming writing the next byte in the sequence.
+* A tempfile: Sometimes used for creating an archive, effectively an unseekable write stream that is then read as an unseekable read stream once and then deleted. The worst case size of a tempfile is the eventual size of the archive; only a single tempfile can exist at once.
+
+General-purpose memory is random-access memory used during creating or reading an archive.
+General-purpose memory can always be bounded regardless of the size of the input.
+A tempfile is not considered general-purpose memory by this document.
+
+In addition to the terms defined above, this specification also refers to the following terms defined beyond the scope of this document:
+CRC32, SHA-256, Deflate, UTF-8.
+See References at the end of this document for links to these definitions.
+
+TODO: cleanup inconsistency between "writing" and "creating".
 
 ## Features
+
+This archive format supports a wide variety of constrained use cases.
+Depending on the constraints, the structure of the archive and inclusion of optional features may vary.
+A creator decides which optional features to include, and a reader may support or not support an archive with a given set of features.
+The set of features used in an archive is encoded in the first few bytes.
+See the `ArchiveHeader` documentation for full details.
+
+The below is a list of use cases expressed as constraints on the writer or reader.
+Some combinations are impossible to support, even in theory.
+The matrix of combinations supported by this archive format is given further below.
+
+Some combination of the following constraints may be placed on the writer:
+* Streaming write: Creating an archive writing to a stream without seeking backward.
+* No tempfile: Creating an archive without writing to and subsequently reading from a secondary tempfile.
+* Unknown list of items: The creator is given one item at a time, not the full list up front. The creator must process the item's contents before being informed of the next item.
+* Single-pass item contents: The creator can only process the contents of an item once. (For example if given an unseekable stream for an item's contents.)
+* Unknown item sizes: The creator is given the contents of an item as a stream of unknown length.
+
+Some combination of the following constraints may be placed on the reader:
+* Streaming read: The archive file is read from a stream that does not support seeking backward. (The archive is not stored on disk.)
+* Known number of items: The reader can get a list of the items in the archive, and the list includes at least the file name of each item.
+* Jump to item contents: The reader can jump to an offset into the archive and find the contents of a specific item.
+* Known item sizes: The reader can get the size of the item before being required to process the file contents.
+* Known item checksums: The reader can get the checksums of an item before being required to process the file contents.
+
+The below is a table of which combinations are supported, currently not supported, and theoretically impossible to ever support.
+Remember that general-purpose memory must always be bounded, not depending on the input.
+```
+SW: Streaming write
+  |NT: No tempfile
+  |  |SI: Unknown list of items
+  |  |  |SC: Single-pass item contents
+  |  |  |  |SS: Unknown item sizes
+  |  |  |  |  |SR: Streaming read
+  |  |  |  |  |  |KI: Known number of items
+  |  |  |  |  |  |  |JI: Jump to item contents (always requires KI and not SR)
+  |  |  |  |  |  |  |  |KS: Known item sizes
+  |  |  |  |  |  |  |  |  |KC: Known item checksums
+SW|--|SI|SC|--|--|--|--|--|--| Always possible with this format. Items can always be added one at a time in a single pass.
+--|NT|--|--|--|--|KI|--|--|--| Currently not supported with this format. The index is only ever at the end, which requires a tempfile.
+--|--|--|--|--|SR|KI|--|--|--| Currently not supported with this format. The index is never at the start of the archive.
+--|--|--|--|--|SR|--|--|--|KC| Currently not supported with this format. The checksums are always after the item contents.
+--|--|--|--|--|--|--|JI|--|--| Impossible to seek to a specific item without a list of items (KI is missing).
+--|--|--|--|--|SR|KI|JI|--|--| Impossible to seek in an unseekable archive (JI requires not SR).
+--|NT|SI|--|--|--|KI|--|--|--| Impossible to collect an index of the archive's items added one at a time without using a tempfile.
+SW|--|SI|--|--|SR|KI|--|--|--| Impossible to encode the list of items at the start of a streamed archive if the list is unknown.
+SW|--|--|SC|SS|SR|--|--|KS|--| Impossible to encode the unknown size of an item's contents before processing its contents in a streamed archive.
+SW|--|--|SC|--|SR|--|--|--|KC| Impossible to know the checksum without first processing the item contents.
+```
+
+TODO: replace `+---+` tables with commonmark `|---|` tables.
+
+## Features (old)
 
 * Archive an arbitrary number of file items. Each file item can have a file size up to 2^64-1 bytes.
 * Several structural features, such as compression and checksums, and optionally enabled per archive. A reader knows within the first few bytes of the file whether it supports all the necessary features to read the archive.
@@ -166,6 +260,10 @@ Compression Method is one of these values:
 A Compression Method of None means the `compress()` and `decompress()` transform functions (referenced in later sections) are the identity function, meaning nothing is changed.
 A Compression Method of Deflate means the `compress()` and `decompress()` transform functions are Deflate compress and decompress functions.
 
+If Compression Method is None, `compression_method_supports_eof` is not set.
+If Compression Method is Deflate, `compression_method_supports_eof` is set.
+This is referenced later in the specification.
+
 The Streaming and Index feature flags affected where the file metadata will appear in the archive.
 See the Data Region and Index Region sections for more details.
 At least one of Streaming or Index must be enabled.
@@ -242,7 +340,8 @@ struct MinimalItem = {
 The `file_contents` is the file contents of the item.
 The fields `name`, `header_metadata`, and `footer_metadata` are explained in their own sections below.
 
-Then if Streaming is enabled, the Data Region contains the following structure once:
+Then if Streaming and the Index are both enabled and `compression_method_supports_eof` is not set (see `ArchiveHeader`),
+the Data Region contains the following structure once:
 
 ```
 struct DataRegionSentinel = {
@@ -526,6 +625,13 @@ If it's a niche use case, it should be reserved in the specification so other im
 ## What's Wrong With ZIP/TAR?
 
 Many of the problems with ZIP and TAR can be excused due to how old the formats are (1989 and 1979 respectively).
+The format's adequate feature set and long tenure has led to widespread adoption, but it's not without drawbacks.
+There is still plenty of room for innovation in this space.
+
+One area of deficiency is the supported use case constraints for creating and reading archives.
+For example, neither ZIP nor TAR supports streaming an archive where the size of an item is unknown before beginning to stream it.
+(ZIP General Purpose Bit 3 doesn't count, because it's design is incorrect, and consequently it's not widely supported.)
+While TAR supports streaming items one at a time, it does not support a central index, which is often desired in modern contexts, such as in `.deb` archives which use a combination of two `.tar` files in a `.a` archive, where the first TAR contains a file that lists the files in the second `.tar`.
 
 #### General problems
 
