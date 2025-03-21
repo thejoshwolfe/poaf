@@ -22,7 +22,7 @@ def main():
         "Specify the compression method. Default is --compress=deflate.")
     group.add_argument("-z", "--deflate", action="store_const", const="deflate", dest="compress", help=
         "Equivalent to --compress=deflate. This is the default.")
-    group.add_argument("-0", action="store_const", const="none", dest="compress", help=
+    group.add_argument("-0", "--no-compression", action="store_const", const="none", dest="compress", help=
         "Equivalent to --compress=none.")
 
     parser.add_argument("--crc32", action="store_true")
@@ -30,6 +30,9 @@ def main():
 
     parser.add_argument("-b", "--backup", action="store_true", help=
         "Include extended file system metadata suitable for backups.")
+
+    parser.add_argument("--stream-split-threshold", type=int, default=0x10000, help=
+        "The minimum number of compressed bytes between stream splits to enable random-access jumping from the index.")
 
     parser.add_argument("-o", "--output", required=True)
     parser.add_argument("--root", default=".", help=
@@ -54,17 +57,17 @@ def main():
         is_backup=args.backup,
         root=args.root,
         output_path=args.output,
+        stream_split_threshold=args.stream_split_threshold,
     ) as writer:
         for file in args.files:
             writer.add(file)
 
 class Writer:
-    def __init__(self, flags, is_backup, root, output_path):
+    def __init__(self, flags, is_backup, root, output_path, stream_split_threshold):
         self.flags = flags
         self.is_backup = is_backup
         self.root = root
 
-        if self.flags.compression_method() != COMPRESSION_DEFLATE: raise NotImplementedError
         if self.flags.crc32() or self.flags.sha256(): raise NotImplementedError
         if is_backup: raise NotImplementedError
         self.checksums_size = 0
@@ -85,11 +88,17 @@ class Writer:
                 self._write(archive_metadata)
 
             if self.flags.index():
-                self.stream_split_threshold = 0x10000
+                if self.flags.no_compression():
+                    self.stream_split_threshold = 0
+                else:
+                    self.stream_split_threshold = stream_split_threshold
                 # Start the index
                 self._index_tmpfile = tempfile.TemporaryFile()
                 try:
-                    self._index_compressor = Compressor()
+                    if self.flags.no_compression(): pass
+                    elif self.flags.deflate():
+                        self._index_compressor = Compressor()
+                    else: assert False
                     # ArchiveMetadata
                     self._write_to_index(archive_metadata)
                 except:
@@ -115,7 +124,7 @@ class Writer:
         st = os.stat(input_path, follow_symlinks=False)
         if not stat.S_ISREG(st.st_mode): raise NotImplementedError("TODO: non-file: " + input_path)
         file_size = st.st_size
-        header_metadata = b''
+        item_metadata = b''
 
         # Write header.
         if self.flags.streaming():
@@ -123,16 +132,20 @@ class Writer:
                 item_signature +
                 struct.pack("<HHQ",
                     len(name),
-                    len(header_metadata),
+                    len(item_metadata),
                     file_size,
                 ) +
                 name +
-                header_metadata
+                item_metadata
             )
 
         # Write contents.
         if self.flags.index():
-            previous_stream_compressed_size = self._maybe_split_stream()
+            if file_size != 0:
+                previous_stream_compressed_size = self._maybe_split_stream()
+            else:
+                # When file_size is 0, a stream split is not allowed.
+                previous_stream_compressed_size = 0
         with open(input_path, "rb") as f:
             buf_size = 0x4000
             while True:
@@ -154,27 +167,35 @@ class Writer:
                 struct.pack("<QHHQ",
                     previous_stream_compressed_size,
                     len(name),
-                    len(header_metadata),
+                    len(item_metadata),
                     file_size,
                 ) +
                 name +
-                header_metadata
+                item_metadata
             )
 
     def close(self):
-        # DataRegionSentinel
-        self._write(
-            item_signature +
-            struct.pack("<HHQ", 0, 0, 0)
-        )
-        self._output.write(self._compressor.flush())
-        self._compressor = None
+        if self.flags.streaming() and self.flags.index() and not self.flags.compression_method_supports_eof():
+            # DataRegionSentinel
+            self._write(
+                item_signature +
+                struct.pack("<HHQ", 0, 0, 0)
+            )
+        # End the Data Region
+        if self.flags.no_compression(): pass
+        elif self.flags.deflate():
+            self._output.write(self._compressor.flush())
+            self._compressor = None
+        else: assert False
 
         if self.flags.index():
             # Index Region.
             data_region_compressed_size = self._output.tell() - archive_header_size
-            self._index_tmpfile.write(self._index_compressor.flush())
-            self._index_compressor = None
+            if self.flags.no_compression(): pass
+            elif self.flags.deflate():
+                self._index_tmpfile.write(self._index_compressor.flush())
+                self._index_compressor = None
+            else: assert False
             self._index_tmpfile.seek(0)
             shutil.copyfileobj(self._index_tmpfile, self._output)
             self._index_tmpfile.close()
@@ -191,21 +212,35 @@ class Writer:
         self._output.close()
 
     def _write(self, buf):
-        self._output.write(self._compressor.compress(buf))
+        if self.flags.no_compression():
+            self._output.write(buf)
+        elif self.flags.deflate():
+            self._output.write(self._compressor.compress(buf))
+        else: assert False
     def _write_to_index(self, buf):
-        self._index_tmpfile.write(self._index_compressor.compress(buf))
+        if self.flags.no_compression():
+            self._index_tmpfile.write(buf)
+        elif self.flags.deflate():
+            self._index_tmpfile.write(self._index_compressor.compress(buf))
+        else: assert False
 
     def _maybe_split_stream(self):
         if self._output.tell() - self._stream_start < self.stream_split_threshold:
             # Too small to split yet.
             return 0
         # Split the stream.
-        self._output.write(self._compressor.flush())
+        if self.flags.no_compression(): pass
+        elif self.flags.deflate():
+            self._output.write(self._compressor.flush())
+        else: assert False
         previous_stream_compressed_size = self._output.tell() - self._stream_start
         self._start_stream()
         return previous_stream_compressed_size
     def _start_stream(self):
-        self._compressor = Compressor()
+        if self.flags.no_compression(): pass
+        elif self.flags.deflate():
+            self._compressor = Compressor()
+        else: assert False
         if self.flags.index():
             self._stream_start = self._output.tell()
 

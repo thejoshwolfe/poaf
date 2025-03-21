@@ -21,8 +21,9 @@ See also What's Wrong With ZIP/TAR? below.
 
 ## Terminology
 
-An archive is a file containing multiple items.
+An archive is a file containing metadata and 0 or more items.
 An item has a name and contents, each a sequence of bytes, and possibly other metadata.
+Metadata is a sequence of entries, each entry containing a tag and data; see the documentation on Metadata for full details.
 
 The items are the primary payload of the archive.
 For example, an archive containing items named `README.md` and `LICENSE.md` would be typical for archiving a software project.
@@ -37,7 +38,7 @@ See the Features section for more details.
 The input to the process of creating an archive is a sequence of items, not necessarily all at once.
 The input to the process of reading an archive is the archive.
 
-A file is a sequence of bytes.
+A file is a sequence of bytes that could be located on a storage device or could be ephemerally communicated between processes.
 A byte is 8 bits.
 
 A file can be used in one of the following modes:
@@ -47,9 +48,13 @@ A file can be used in one of the following modes:
 * A random-access file (For writing): Each byte must be written in sequence from start to finish, but a writer may seek backward and overwrite earlier bytes before resuming writing the next byte in the sequence.
 * A tempfile: Sometimes used for creating an archive, effectively an unseekable write stream that is then read as an unseekable read stream once and then deleted. The worst case size of a tempfile is the eventual size of the archive; only a single tempfile can exist at once.
 
-General-purpose memory is random-access memory used during creating or reading an archive.
+General-purpose memory is random-access memory used during the creation or reading of an archive.
 General-purpose memory can always be bounded regardless of the size of the input.
 A tempfile is not considered general-purpose memory by this document.
+
+The computational complexity analysis in this specification (when values are "bounded") considers 16-bit sizes (up to 65535 bytes) to be negligible, and 64-bit sizes (more than 65535 bytes) to be effectively unbounded.
+For example, a name with a length up to 65535 bytes effectively requires worst-case constant memory to store and is not a concern,
+while file contents with a length up to 18446744073709551615 bytes effectively requires worst-case infinite memory to store which is never required.
 
 In addition to the terms defined above, this specification also refers to the following terms defined beyond the scope of this document:
 CRC32, SHA-256, Deflate, UTF-8.
@@ -268,11 +273,10 @@ The Streaming and Index feature flags affected where the file metadata will appe
 See the Data Region and Index Region sections for more details.
 At least one of Streaming or Index must be enabled.
 
-The CRC32 and SHA256 feature flags affect what that the `checksums` fields in the archive will contain.
-If CRC32 is enabled, `checksums` contains a 4-byte CRC32 checksum.
-If SHA256 is enabled, `checksums` contains a 32-byte SHA-256 checksum.
-If both are enabled, `checksums` contains both in the order listed here.
-These feature flags determine `checksums_size` (referenced in later structures): either `0`, `4`, `32`, or `36`.
+The CRC32 and SHA256 feature flags affect what that the `file_contents_checksums` and `index_checksums` fields in the archive will contain.
+If CRC32 is enabled, the checksums fields contain a 4-byte CRC32 checksum.
+Then if SHA256 is enabled, the checksums fields contain a 32-byte SHA-256 checksum.
+These feature flags determine the `checksums_size` throughout the archive: either `0`, `4`, `32`, or `36`.
 
 If a reader encounters an enabled Reserved feature flag or if the Compression Method is set to a Reserved value,
 the archive MUST be rejected as not supported.
@@ -281,24 +285,35 @@ and the feature is critical to understanding the structure of the archive.
 
 #### Data Region
 
-The Data Region is divided up into one or more streams compressed separately from each other.
-Every byte of the Data Region must be included in exactly one stream.
-See Archive Header for the definition of `compress()` and `decompress()` used in this section,
-and note that those functions can be the identity function if the Compression Method is None.
+If Compression Method is not None, the Data Region is compressed in one or more distinct streams.
+Every byte of the Data Region structures specified below must be included in exactly one compression stream.
+The first stream starts with the `DataRegionArchiveMetadata` at the start of the Data Region,
+and each subsequent stream, if any, starts at the `file_contents` of a `DataItem`.
+The last compression stream ends at the end of the last structure, usually the last `DataItem`, or sometimes the `DataRegionArchiveMetadata` if there are no items, or the `DataRegionSentinel` if present.
+If the Index is disabled, there MUST be only be one stream for the whole Data Region.
+Note that in some cases, all the Data Region structures together comprise 0 bytes of data,
+but the Data Region must still be compressed if Compression Method is not None.
 
-The first stream starts with the `ArchiveMetadata`.
-Each subsequent stream, if any, starts at the start of a `DataItem`.
-If the Index is disabled, there MUST be only be one stream.
+If Compression Method is None, the Data Region is not compressed; there are no compression streams.
 
-If the Index is enabled, the Index Region contains `data_item_offset` fields that encode the locations of the start of each stream after the first.
-The purpose of splitting the Data Region into multiple streams is to enable a reader to jump to the middle of the archive and decompress an item without needing to decompress all bytes leading up to that item.
-The creator of an archive may choose to group multiple `DataItem` structures together into a single stream,
-in which case some `data_item_offset` fields will be 0, which means they do not encode the location of the start of a stream.
+Note that if the Index is enabled, each `IndexItem` contains a `previous_stream_compressed_size` field that can encode the location of the `file_contents` of the corresponding `DataItem`.
+The purpose of this field is to enable a reader to first read the Index Region, then jump to the middle of the archive and read a given item's `file_contents` in bounded time (not dependent on the sizes of the prior items).
+Note that the `previous_stream_compressed_size` does not encode an absolute offset, but rather a relative offset from a previous reference; see the Index Region documentation for full details.
 
-If Compression Method is None, then a creator MUST not group multiple `DataItem` structures together into a single stream.
-TODO: what if the contents is actually 0 size?
+If Compression Method is None, then every `IndexItem.previous_stream_compressed_size` must encode the location of the corresponding `DataItem.file_contents`.
+Again see the Index Region documentation for full details.
 
-The Data Region first contains a `DataRegionArchiveMetadata` structure once:
+If Compression Method is not None, then the creator of an archive may choose to group multiple items' `file_contents` (and any `DataItem` fields in between) together in a compression stream,
+in which case it is not possible to jump to the start every item's compressed `file_contents`,
+because compression streams must be decoded linearly from the start of the stream.
+If a compression stream does not begin at a `DataItem.file_contents`, then the corresponding `IndexItem.previous_stream_compressed_size` must be 0, indicating an unspecified value.
+(Note that when Compression Method is None, a 0 is a valid value, not an unspecified value.)
+If an item's `file_size` is 0, the `previous_stream_compressed_size` MUST also be 0;
+this is to avoid a structural ambiguity in the archive, and it would never be useful to jump to a zero-sized `file_contents` anyway.
+Otherwise, if a compression stream begins at a `DataItem.file_contents`, then the corresponding `IndexItem.previous_stream_compressed_size` must not be 0.
+
+The Data Region first contains a `DataRegionArchiveMetadata` structure once.
+(As a reminder, if Compression Method is not None, then this and the following structures are inside one or more compressed streams.)
 
 ```
 alias DataRegionArchiveMetadata =
@@ -314,7 +329,7 @@ struct Empty = {}
 ```
 
 Then the Data Region contains zero or more `DataItem` structures.
-Each occurrence of this structure encodes an item in the archive:
+Each occurrence of this structure corresponds to an item in the archive:
 
 ```
 alias DataItem =
@@ -322,14 +337,14 @@ alias DataItem =
     else: MinimalItem;
 
 struct StreamingItem = {
-    item_signature:        4 bytes  // Always 0xDCA9ACDC i.e. 0xDC 0xAC 0xA9 0xDC
-    name_size:             2 bytes
-    header_metadata_size:  2 bytes
-    file_size:             8 bytes
-    name:                  name_size bytes
-    header_metadata:       header_metadata_size bytes
-    file_contents:         file_size bytes
-    checksums:             checksums_size bytes  // See ArchiveHeader for checksums_size
+    item_signature:           4 bytes  // Always 0xDCA9ACDC i.e. 0xDC 0xAC 0xA9 0xDC
+    name_size:                2 bytes
+    item_metadata_size:       2 bytes
+    file_size:                8 bytes
+    name:                     name_size bytes
+    item_metadata:            item_metadata_size bytes
+    file_contents:            file_size bytes
+    file_contents_checksums:  checksums_size bytes  // See ArchiveHeader for checksums_size
 }
 
 struct MinimalItem = {
@@ -337,10 +352,15 @@ struct MinimalItem = {
 }
 ```
 
-The `file_contents` is the file contents of the item.
-The fields `name`, `header_metadata`, and `footer_metadata` are explained in their own sections below.
+The creator of an archive MUST set the `item_signature` appropriately.
+Note that a reader CAN ignore the `item_signature`; checking the `item_signature` is never necessary for parsing the structure of the archive.
+However, a reader SHOULD validate the `item_signature` to guard against implementation errors.
 
-Then if Streaming and the Index are both enabled and `compression_method_supports_eof` is not set (see `ArchiveHeader`),
+The `file_contents` is the file contents of the item.
+The `file_contents_checksums` are for the `file_contents` (after decompression if any).
+For details on the fields `name`, `item_metadata`, and `file_contents_checksums`, see their dedicated sections below.
+
+Then if Streaming is enabled and the Index is enabled and `compression_method_supports_eof` is not set (see `ArchiveHeader`),
 the Data Region contains the following structure once:
 
 ```
@@ -350,7 +370,7 @@ struct DataRegionSentinel = {
 }
 ```
 
-Note that the `DataRegionSentinel` appears to be the first 16 bytes of a `StreamingItem` with the `name_size`, `header_metadata_size`, and `file_size` fields all set to 0, but the `DataRegionSentinel` does not encode an item in the archive.
+Note that the `DataRegionSentinel` appears to be the first 16 bytes of a `StreamingItem` with the `name_size`, `item_metadata_size`, and `file_size` fields all set to 0, but the `DataRegionSentinel` does not encode an item in the archive.
 Note that a `StreamingItem.name_size` cannot be 0; see the documentation on the `name` field for more details.
 
 #### Index Region
@@ -358,10 +378,16 @@ Note that a `StreamingItem.name_size` cannot be 0; see the documentation on the 
 If the Index is not enabled (see `ArchiveHeader`), there is no Index Region.
 This section describes the Index Region when the Index is enabled.
 
-The Index Region is compressed in one stream.
-The offset in the archive where the compressed Index Region starts is encoded in the Archive Footer; see below.
+If Compression Method is not None, all the below structures of the Index Region are compressed together in one stream.
+The location of the start of the compression stream is encoded in the Archive Footer; see below.
+If Compression Method is None, the Index Region is not compressed, and the location of the start of the Index Region is encoded in the Archive Footer.
 
-The Index Region contains the following structure once:
+In some cases, all the Index Region structures together comprise 0 bytes of data.
+In this case, if Compression Method is None, the location of the start of the Index Region is the same as the location of the start of the Archive Footer.
+Or if Compression Method is not None, the Index Region is a compression stream encoding 0 bytes of data.
+
+The Index Region contains the following structure once.
+(As a reminder, if Compression Method is not None, then this and the following structure are inside a compressed stream.)
 
 ```
 struct ArchiveMetadata = {
@@ -374,42 +400,49 @@ Then the Index Region contains the following structure zero or more times:
 
 ```
 struct IndexItem = {
-    checksums:             checksums_size bytes  // See ArchiveHeader for checksums_size
+    file_contents_checksums:          checksums_size bytes  // See ArchiveHeader for checksums_size
     previous_stream_compressed_size:  8 bytes
-    name_size:             2 bytes
-    header_metadata_size:  2 bytes
-    file_size:             8 bytes
-    name:                  name_size bytes
-    header_metadata:       header_metadata_size bytes
+    name_size:                        2 bytes
+    item_metadata_size:               2 bytes
+    file_size:                        8 bytes
+    name:                             name_size bytes
+    item_metadata:                    item_metadata_size bytes
 }
 ```
 
 If Streaming is enabled, the `ArchiveMetadata` in the Index Region must exactly match the `ArchiveMetadata` in the Data Region.
+See the documentation on `archive_metadata` for details.
 
 The number and order of `IndexItem` structs must match the number and order of `DataItem` structs in the Data Region.
-All fields present in both structs (`name_size`, `header_metadata_size`, `file_size`, `name`, `header_metadata`, and `checksums`)
-must exactly match between each `IndexItem` and the corresponding `DataItem`.
+If Streaming is enabled, all fields present in both structs (`name_size`, `item_metadata_size`, `file_size`, `name`, `item_metadata`, and `file_contents_checksums`)
+must exactly match between each `IndexItem` and the corresponding `StreamingItem`.
 
-If `previous_stream_compressed_size` is non-zero, it means the Data Region is split into multiple streams,
-and a stream with the given size in the archive (after compression) ends just before a new stream starts that starts with the `DataItem.file_contents` corresponding to this `IndexItem`.
-This field exists to enable a reader to jump into the middle of the archive and decompress specific items without needing to decompress all items leading up to it.
-An archive creator may set the `previous_stream_compressed_size` to 0 if there is no stream split in the corresponding `DataItem`; see Data Region for more details.
+The `previous_stream_compressed_size` field can sometimes enable a reader to jump into the middle of the archive and read the item's `file_contents` without needing to read the entire Data Region up to that point.
+However, sometimes jumping to a specific item's `file_contents` is not possible, in which case the `previous_stream_compressed_size` will be 0.
+Which items have non-zero `previous_stream_compressed_size` values is up to the discretion of the archive creator.
 
-A reader can use the below pseudocode to compute the `stream_start_offset` and `skip_bytes` to jump into the middle of an archive for any item:
+If Compression Method is None, then every item's `previous_stream_compressed_size` can be used to locate that item's `file_contents` in the Data Region using the pseudocode below unless the item's `file_size` is 0, in which case the `previous_stream_compressed_size` must be 0.
+Note that it would never be useful to locate a 0-sized `file_size` in the Data Region.
+
+If Compression Method is not None, then each `previous_stream_compressed_size` can be 0, which means an unspecified value, or non-zero, which means a compression stream starts at the corresponding `file_contents` in the Data Region.
+The start of every compression stream after the first one in the Data Region must correspond to a non-zero `previous_stream_compressed_size` value in the Index Region.
+A compression stream must not start at a 0-size `file_contents`, which means evert item with a `file_size` of 0 must also have a `previous_stream_compressed_size` of 0;
+this is to prevent ambiguity in the structure of the archive and it would never be useful to locate a 0-sized `file_size` anyway.
+
+A reader can effectively use the below pseudocode to compute the `stream_start_offset` and `skip_bytes` to jump into the middle of an archive for any item:
 
 ```
 // Precompute stream_start_offset and skip_bytes for all index items:
 let stream_start_offset = sizeof(ArchiveHeader) // The start of the Data Region
 let skip_bytes = sizeof(DataRegionArchiveMetadata) // The first thing in the stream
 for each index_item:
-    // offset represents the start of the current
     if index_item.previous_stream_compressed_size > 0:
         stream_start_offset += index_item.previous_stream_compressed_size
         skip_bytes = 0
     else:
         if Streaming is enabled:
             // Skip the corresponding StreamingItem's fields before file_contents.
-            skip_bytes += 16 + index_item.name_size + index_item.header_metadata_size
+            skip_bytes += 16 + index_item.name_size + index_item.item_metadata_size
     index_item.stream_start_offset = stream_start_offset
     index_item.skip_bytes = skip_bytes
     // For the next item, skip the file_contents of this item.
@@ -420,15 +453,15 @@ for each index_item:
 
 // Jump to a specific item.
 let index_item = the item to jump to.
-seek to index_item.stream_start_offset in the archive file.
-read and decompress until index_item.skip_bytes decompressed bytes have been read.
-// The decompression stream is now positioned at the corresponding DataItem.file_contents.
+if Compression Method is None:
+    assert index_item.skip_bytes == 0
+    seek to index_item.stream_start_offset
+    // The next index_item.file_size bytes are the DataItem.file_contents.
+else:
+    seek to index_item.stream_start_offset in the archive file.
+    read and decompress until index_item.skip_bytes decompressed bytes have been read.
+    // The next index_item.file_size bytes read from the decompression stream are the DataItem.file_contents.
 ```
-
-If Compression Method is None, then the first `previous_stream_compressed_size` must be the size of the `DataRegionArchiveMetadata`, which might be 0,
-and every subsequent `previous_stream_compressed_size` must be the size of the `DataItem` corresponding to the previous `IndexItem`.
-Note that when Compression Method is None, `previous_stream_compressed_size` can be 0 in some cases,
-but `skip_bytes` (computed by the above pseudocode) will never be greater than zero.
 
 #### Archive Footer
 
@@ -437,7 +470,7 @@ This section describes the Archive Footer when the Index is enabled.
 
 ```
 struct ArchiveFooter = {
-    checksums:                    checksums_size bytes  // See ArchiveHeader for checksums_size
+    index_checksums:              checksums_size bytes  // See ArchiveHeader for checksums_size
     data_region_compressed_size:  8 bytes
     footer_signature:             4 bytes  // Always 0xCFE9EEB6 i.e. 0xB6 0xEE 0xE9 0xCF
 }
@@ -447,7 +480,8 @@ A reader wishing to list the contents of the archive without decompressing the e
 The start of the Index Region is at a byte offset equal to the size of the `ArchiveHeader` plus `data_region_compressed_size`.
 As specified earlier, the end of the Index Region is the start of the `ArchiveFooter`.
 
-The `checksums` are for the entire Index Region after decompression.
+The `index_checksums` are for the entire Index Region after decompression if any.
+See the documentation for the `index_checksums` field for more details.
 
 ### Field details
 
@@ -459,69 +493,72 @@ The same name cannot appear in two different items (in one region).
 The names of entries within the archive have validation rules.
 TODO: document the `validate_archive_path` function.
 
-#### `data_item_offset`
+#### `archive_metadata`, `item_metadata`
 
-TODO
-
-#### `archive_metadata`, `header_metadata`, `footer_metadata`
-
-Each metadata is zero or more fields.
-Each metadata item is in one of the following two structures:
+Each metadata is zero or more entries.
+Each metadata entry is in one of the following two structures:
 
 ```
-struct Field8 = {
+struct Entry8 = {
     tag:   1 byte
     size:  1 byte  // In the range 0-127
     data:  size bytes
 }
 
-struct Field16 = {
+struct Entry16 = {
     size_plus_32640:  2 bytes  // In the range 32768-65535, encodes the range 128-32895
     tag:              1 bytes
     data:             (size_plus_32640 - 32640) bytes
 }
 ```
 
-A reader can distinguish between the two structs by first assuming it is a `Field8` and reading 2 bytes.
-Let the two fields read be `tag` and `size` in that order.
-If `size < 128`, then it is a `Field8`.
-If `size >= 128`, then it is a `Field16` (and `size_plus_32640 = (size << 8) | tag`, and the real `tag` is the next byte).
+A reader can distinguish between the two structs by first assuming it is a `Entry8` and reading 2 bytes.
+Let the two bytes read be `tag` and `size` in that order.
+If `size < 128`, then it is a `Entry8`.
+If `size >= 128`, then it is a `Entry16` (and `size_plus_32640 = (size << 8) | tag`, and the real `tag` is the next byte).
 
 A creator chooses which struct to write depending on the length of the `data`.
 Let the length of the `data` be `l` and the tag be `tag`.
-If `l < 128`, then the data layout is `Field8{ .tag = tag, .size = l, .data = data}`.
-If `l >= 128`, then the data layout is `Field16{ .size_plus_32640 = l + 32640, .tag = tag, .data = data}`.
+If `l < 128`, then the data layout is `Entry8{ .tag = tag, .size = l, .data = data}`.
+If `l >= 128`, then the data layout is `Entry16{ .size_plus_32640 = l + 32640, .tag = tag, .data = data}`.
 
-A reader must validate that the size specified by each field does not overflow the bounds of the metadata which contains it.
+A reader must validate that the size specified by each entry does not overflow the bounds of the metadata which contains it.
 
 The meaning of `data` depends on the value of `tag`.
 See the Metadata section for details.
 
+#### `file_contents_checksums`, `index_checksums`
+
+See the `ArchiveHeader` for what this field contains.
+It will contain some combination of checksums or nothing.
+
+The checksums are encoded in binary, not in hexadecimal.
+The CRC32 value is stored in little-endian byte order.
+The SHA-256 value is stored in the byte order specified by that hash function.
+
 ### Metadata
 
-Each metadata field has a `tag` and `data`.
-See the documentation on `compression_metadata` for information about the encoded size of `data` and the difference between `Field8` and `Field16`.
+Each metadata entry has a `tag` and `data`.
+See the documentation on `archive_metadata` and `item_metadata` for information about the encoded size of `data` and the difference between `Entry8` and `Entry16`.
 
-The metadata fields must be sorted by `tag` ascending.
-The order of multiple metadata fields with the same `tag` is specified for each tag value separately.
+The metadata entries must be sorted by `tag` ascending.
+The order of multiple metadata entries with the same `tag` is specified for each tag value separately.
 
-The below columns indicate: the tag value, whether the metadata field is allowed in `ArchiveMetadata`, whether the metadata field is allowed in `DataItem.metadata`/`IndexItem.metadata`, whether multiple of the same tag can appear in one metadata, and the name of the section below explaining the row in more detail.
+The below columns indicate: the tag value, whether the entry is allowed in `archive_metadata`, whether the metadata field is allowed in `item_metadata`, whether multiple of the same tag can appear in one metadata, and the name of the section below explaining the entry in more detail.
 
-+---------+---------+--------+--------+------+------------+
-| Tag     | Archive | Header | Footer | Dupe | Meaning    |
-+---------+---------+--------+--------+------+------------+
-| 0-127   | Yes     | Yes    | Yes    | Yes  | Invalid    |
-| 128     | No      | Yes    | No     | No   | `FileType` |
-| 129     | No      | Yes    | No     | No   | `PosixAttributes` |
-| 130     | No      | Yes    | No     | No   | `NtfsAttributes` |
-| 131     | No      | No     | Yes    | No   | `Crc32`    |
-| 132     | No      | No     | Yes    | No   | `Sha256`   |
-| 133-253 | Yes     | Yes    | Yes    | Yes  | Ignored    |
-| 254     | Yes     | Yes    | Yes    | Yes  | `Comment`  |
-| 255     | Yes     | Yes    | Yes    | Yes  | `Padding`  |
-+---------+---------+--------+--------+------+------------+
++---------+---------+------+------+------------+
+| Tag     | Archive | Item | Dupe | Meaning    |
++---------+---------+------+------+------------+
+| 0       | No      | No   | No   | `FileType` |
+| 1-127   | Yes     | Yes  | -    | Reserved   |
+| 128     | No      | No   | No   | `PosixAttributes` |
+| 129     | No      | No   | No   | `NtfsAttributes` |
+| 130-253 | Yes     | Yes  | Yes  | Ignored    |
+| 254     | Yes     | Yes  | Yes  | `Comment`  |
+| 255     | Yes     | Yes  | Yes  | `Padding`  |
++---------+---------+------+------+------------+
 
-#### `FileType` (128)
+#### `FileType` (0)
 
 The `data` is a single byte encoding one of the following file types:
 
@@ -532,7 +569,7 @@ The `data` is a single byte encoding one of the following file types:
 | 1     | POSIX executable |
 | 2     | Directory/folder |
 | 3     | Symlink          |
-| 4-254 | Invalid          |
+| 4-254 | Reserved          |
 | 255   | Other            |
 +-------+------------------+
 
@@ -555,33 +592,25 @@ A value of 255 means this item encodes something else not covered above, such as
 Additional metadata can be used to specify what it is.
 This is intended for backups.
 
-#### `PosixAttributes` (129)
+A reader must support values 0 and 2: Regular file and Directory/folder.
+A reader may declare other values as unsupported.
+A reader may conditionally support the value 255: Other based on other metadata for this item.
+
+A writer must not include a reserved value.
+If a reader encounters a reserved value or any value the reader does not support as per the above paragraph,
+the reader must reject the item as unreadable.
+
+#### `PosixAttributes` (128)
 
 If this tag is present, a `FileType` (128) tag must also be present.
 This tag is intended for backups.
 TODO
 
-#### `NtfsAttributes` (130)
+#### `NtfsAttributes` (129)
 
 If this tag is present, a `FileType` (128) tag must also be present.
 This tag is intended for backups.
 TODO
-
-#### `Crc32` (131)
-
-The `data` is 4 bytes encoding a CRC32 checksum.
-
-When in an item's `footer_metadata`, it is the hash of the `file_contents`.
-When in the `archive_footer_metadata`, it is the hash of the entire uncompressed Index Region,
-including the `ArchiveMetadata` and every `IndexItem` struct.
-
-#### `Sha256` (132)
-
-The `data` is 32 bytes encoding the SHA-256 sum.
-
-When in an item's `footer_metadata`, it is the hash of the `file_contents`.
-When in the `archive_footer_metadata`, it is the hash of the entire uncompressed Index Region,
-including the `ArchiveMetadata` and every `IndexItem` struct.
 
 #### `Comment` (254)
 
@@ -591,23 +620,26 @@ This is intended for unstructured information for humans rather than machine-par
 If an implementation wishes to encode structured metadata in the archive, see the Ignored section below.
 
 If duplicates appear of this tag, the encoded comments are considered multiple sequential comments for the same item.
-A renderer might present them separated by two newlines perhaps.
+A renderer might present them joined by two newlines perhaps.
 
 #### `Padding` (255)
 
-Every byte of `data` is 0.
+Every byte of `data` must be 0.
 
 A creator should include this field in order to waste space, for whatever reason.
+Note that certain amounts of space are tricky to waste;
+the minimum amount of space to waste is 2 bytes, not 1,
+and in order to waste 130 or 131 bytes, it requires two occurrences of this entry.
 
 A reader should either require the data be all 0 or simply ignore the field.
 
-#### Invalid
+#### Reserved
 
-A creator must not include an invalid tag value.
-If a reader encounters an invalid tag value, it must reject the archive as unreadable.
+A creator must not include any reserved tag value.
+If a reader encounters a reserved tag value, it must reject the item as unreadable.
 
-An invalid tag value likely means that a future version of this archive format has introduced a tag that changes the interpretation of the structure of the archive.
-It is not possible to read the archive without understanding how to handle the new tag value.
+A reserved tag value means that a future version of this archive format has introduced a tag that changes the interpretation of the structure of the archive,
+and is not possible to read the archive without understanding how to handle the new tag value.
 
 #### Ignored
 

@@ -2,6 +2,7 @@
 
 import sys, os
 import struct
+import io
 import zlib
 
 from common import *
@@ -22,7 +23,7 @@ def main():
             for item in reader:
                 with open(os.path.join(args.extract, item.name), "wb") as f:
                     while not item.read_complete():
-                        buf = reader.read_from_item(item, 0x4000)
+                        buf = reader.read_from_item(item, default_chunk_size)
                         f.write(buf)
     else:
         specific_items = set(args.items)
@@ -37,9 +38,10 @@ def main():
                     found_items.add(item.name)
                     with reader.open_item_reader(item) as input:
                         with open(os.path.join(args.extract, item.name), "wb") as output:
-                            buf = input.read(0x4000)
-                            if len(buf) == 0: break
-                            output.write(buf)
+                            while True:
+                                buf = input.read(default_chunk_size)
+                                if len(buf) == 0: break
+                                output.write(buf)
         missing_items = specific_items - found_items
         if len(missing_items) > 0:
             sys.exit("\n".join([
@@ -47,6 +49,7 @@ def main():
                 for name in sorted(missing_items)
             ]))
 
+default_chunk_size = 0x400
 
 class StreamReader:
     def __init__(self, archive_path, should_validate_index):
@@ -61,7 +64,6 @@ class StreamReader:
             self.flags = FeatureFlags(archive_header[3])
 
             if not self.flags.streaming(): raise IncompatibleInputError("archive does not support streaming")
-            if self.flags.compression_method() != COMPRESSION_DEFLATE: raise NotImplementedError
             self._start_stream(self._input.tell())
 
             # ArchiveMetadata
@@ -79,31 +81,37 @@ class StreamReader:
         self.close()
     def __iter__(self):
         return self
-    def _read(self, n, **kwargs):
-        return _read_from_decompressor(self._decompressor, self._input, n, **kwargs)
 
     def close(self):
         self._input.close()
-        self._decompressor = None
+        if self.flags.no_compression(): pass
+        elif self.flags.deflate():
+            self._decompressor = None
+        else: assert False
 
     def __next__(self):
         if self._current_item != None: raise ValueError("call read_from_item() until EOF before reading then next item")
 
+        expect_sentinel = self.flags.streaming() and self.flags.index() and not self.flags.compression_method_supports_eof()
+
         # StreamingItem
-        buf = self._read(16)
+        buf = self._read(16, allow_eof=not expect_sentinel)
+        if len(buf) == 0: raise StopIteration
 
         if buf[0:4] != item_signature: raise MalformedInputError("item signature not found")
         (
             name_size,
-            header_metadata_size,
+            item_metadata_size,
             file_size,
         ) = struct.unpack("<HHQ", buf[4:16])
 
-        # Check for sentinel.
-        if name_size == header_metadata_size == file_size == 0: raise StopIteration
+        if expect_sentinel:
+            if name_size == item_metadata_size == file_size == 0:
+                # Actually a DataRegionSentinel.
+                raise StopIteration
 
-        # Read the rest of the item.
-        item = _read_item(self, name_size, header_metadata_size, file_size)
+        # Read the rest of the StreamingItem.
+        item = _read_item(self, name_size, item_metadata_size, file_size)
 
         self._current_item = item
         self._remaining_bytes_in_current_contents = file_size
@@ -127,16 +135,20 @@ class StreamReader:
         buf = self._read(size, allow_eof=at_the_start)
 
         if at_the_start:
-            if len(buf) == 0:
+            if size > 0 and len(buf) == 0:
                 # Found a stream split.
-                unused_data = self._decompressor.unused_data
-                offset = self._input.tell() - len(unused_data)
+                if self.flags.no_compression(): assert False
+                elif self.flags.deflate():
+                    assert self._decompressor.eof
+                    unused_data = self._decompressor.unused_data
+                    unused_data_len = len(unused_data)
+                else: assert False
+                offset = self._input.tell() - unused_data_len
                 item.previous_stream_compressed_size = offset - self._stream_start
                 self._start_stream(offset)
-                self._decompressor = Decompressor()
 
                 # Try again.
-                buf = self._read(size)
+                buf = self._read(size, unused_data_from_previous_stream=unused_data)
             else:
                 item.previous_stream_compressed_size = 0
 
@@ -150,8 +162,21 @@ class StreamReader:
 
         return buf
 
+    def _read(self, n, *, allow_eof=False, unused_data_from_previous_stream=None):
+        if self.flags.no_compression():
+            assert unused_data_from_previous_stream == None
+            buf = self._input.read(n)
+            if len(buf) == 0 and allow_eof: return buf
+            if len(buf) < n: raise MalformedInputError("unexpected EOF")
+            return buf
+        elif self.flags.deflate():
+            return _read_from_decompressor(self._decompressor, self._input, n, allow_eof=allow_eof, unused_data_from_previous_stream=unused_data_from_previous_stream)
+        else: assert False
     def _start_stream(self, stream_start):
-        self._decompressor = Decompressor()
+        if self.flags.no_compression(): pass
+        elif self.flags.deflate():
+            self._decompressor = Decompressor()
+        else: assert False
         self._stream_start = stream_start
 
 class IndexReader:
@@ -167,7 +192,6 @@ class IndexReader:
             self._stream_start = data_region_start
 
             if not self.flags.index(): raise IncompatibleInputError("archive does not support random access")
-            if self.flags.compression_method() != COMPRESSION_DEFLATE: raise NotImplementedError
 
             # ArchiveFooter
             self._file_size = self._input.seek(0, os.SEEK_END)
@@ -184,7 +208,10 @@ class IndexReader:
             if not (index_region_start < self.archive_footer_start): raise MalformedInputError("data_region_compressed_size out of bounds")
 
             self._input.seek(index_region_start)
-            self._decompressor = Decompressor()
+            if self.flags.no_compression(): pass
+            elif self.flags.deflate():
+                self._decompressor = Decompressor()
+            else: assert False
 
             # ArchiveMetadata
             archive_metadata_size = struct.unpack("<H", self._read(2))[0]
@@ -203,30 +230,46 @@ class IndexReader:
         self.close()
     def __iter__(self):
         return self
-    def _read(self, n, **kwargs):
+    def _read(self, n, *, allow_eof=False):
         limit = self.archive_footer_start - self._input.tell()
-        return _read_from_decompressor(self._decompressor, self._input, n, buffer_size=min(limit, 0x4000), **kwargs)
+        if self.flags.no_compression():
+            if limit == 0 and allow_eof: return b''
+            if limit < n: raise MalformedInputError("unexpected EOF")
+            buf = self._input.read(n)
+            if len(buf) < n: raise MalformedInputError("file has been edited while reading")
+            return buf
+        elif self.flags.deflate():
+            return _read_from_decompressor(self._decompressor, self._input, n, compressed_read_limit=limit, allow_eof=allow_eof)
+        else: assert False
 
     def close(self):
         self._input.close()
-        self._decompressor = None
+        if self.flags.no_compression(): pass
+        elif self.flags.deflate():
+            self._decompressor = None
+        else: assert False
 
     def __next__(self):
         # IndexItem
         buf = self._read(self.flags.checksums_size() + 20, allow_eof=True)
         if len(buf) == 0:
             # Make sure we've actually reached the end of the Index Region.
-            offset = self._input.tell() - len(self._decompressor.unused_data)
+            if self.flags.no_compression():
+                unused_data_len = 0
+            elif self.flags.deflate():
+                unused_data_len = len(self._decompressor.unused_data)
+            else: assert False
+            offset = self._input.tell() - unused_data_len
             raise StopIteration
         checksums = buf[:-20]
         (
             previous_stream_compressed_size,
             name_size,
-            header_metadata_size,
+            item_metadata_size,
             file_size,
         ) = struct.unpack("<QHHQ", buf[-20:])
 
-        item = _read_item(self, name_size, header_metadata_size, file_size)
+        item = _read_item(self, name_size, item_metadata_size, file_size)
         item.previous_stream_compressed_size = previous_stream_compressed_size
         item.checksums = checksums
 
@@ -236,14 +279,17 @@ class IndexReader:
             item._stream_start = self._stream_start + previous_stream_compressed_size
             item._skip_bytes_until_contents = 0
             self._stream_start = item._stream_start
+            self._skip_bytes_since_stream_start = 0
         else:
             # Getting to this item requires starting at a previous item and skipping bytes.
             item._stream_start = self._stream_start
             item._skip_bytes_until_contents = self._skip_bytes_since_stream_start
             if self.flags.streaming():
                 # Account for StreamingItem size before file_contents.
-                item._skip_bytes_until_contents += 16 + name_size + header_metadata_size
+                item._skip_bytes_until_contents += 16 + name_size + item_metadata_size
                 self._skip_bytes_since_stream_start = item._skip_bytes_until_contents
+            if item.file_size > 0 and self.flags.no_compression() and item._skip_bytes_until_contents != 0:
+                raise MalformedInputError("previous_stream_compressed_size not set in uncompressed archive")
         # The next offset will skip this item's contents.
         self._skip_bytes_since_stream_start += file_size
         if self.flags.streaming():
@@ -253,26 +299,34 @@ class IndexReader:
         return item
 
     def open_item_reader(self, item):
+        if item.file_size == 0:
+            # The contents is trivial.
+            return io.BytesIO()
         # This could have also been done without opening another fd and just seeking all over the place.
         f = open(self._archive_path, "rb")
         try:
             f.seek(item._stream_start)
-            decompressor = Decompressor()
+            if self.flags.no_compression():
+                decompressor = None
+            elif self.flags.deflate():
+                decompressor = Decompressor()
+            else: assert False
             skip_bytes = item._skip_bytes_until_contents
             while skip_bytes > 0:
-                size = min(skip_bytes, 0x4000)
+                assert not self.flags.no_compression(), "skip_bytes is always 0 for no-compression archives"
+                size = min(skip_bytes, default_chunk_size)
                 skipped_buf = _read_from_decompressor(decompressor, f, size)
                 skip_bytes -= len(skipped_buf)
-            return ItemReader(decompressor, f, item.file_size)
+            return ItemReader(self.flags, decompressor, f, item.file_size)
         except:
             f.close()
             raise
 
 class Item:
-    def __init__(self, name, file_size, header_metadata):
+    def __init__(self, name, file_size, item_metadata):
         self.name = name
         self.file_size = file_size
-        self.header_metadata = header_metadata
+        self.item_metadata = item_metadata
         self.previous_stream_compressed_size = None
         self.checksums = None
         self._stream_start = None
@@ -282,27 +336,41 @@ class Item:
 
 class ItemReader:
     """ I haven't learned how to use the io.* OOP family yet. """
-    def __init__(self, decompressor, file, returned_limit):
-        self._decompressor = decompressor
-        self._file = file
+    def __init__(self, flags, decompressor, file, returned_limit):
+        self.flags = flags
+        if self.flags.no_compression(): pass
+        elif self.flags.deflate():
+            self._decompressor = decompressor
+        else: assert False
+        self._input = file
         self._remaining_bytes = returned_limit
     def __enter__(self):
         return self
     def __exit__(self, *args):
-        self._file.close()
-        self._decompressor = None
+        self._input.close()
+        if self.flags.no_compression(): pass
+        elif self.flags.deflate():
+            self._decompressor = None
+        else: assert False
     def read(self, size=-1):
         if size < 0:
-            limit = self._remaining_bytes
+            decompressed_len = self._remaining_bytes
         else:
-            limit = min(size, self._remaining_bytes)
-        return _read_from_decompressor(self._decompressor, self._file, limit, buffer_size=limit)
+            decompressed_len = min(size, self._remaining_bytes)
+        if self.flags.no_compression():
+            buf = self._input.read(decompressed_len)
+            if len(buf) < decompressed_len: raise MalformedInputError("unexpected EOF")
+        elif self.flags.deflate():
+            buf = _read_from_decompressor(self._decompressor, self._input, decompressed_len)
+        else: assert False
+        self._remaining_bytes -= len(buf)
+        return buf
 
 # MAINTAINER NOTE: I originally tried using a base class for these common methods,
 # but then pytlint got confused about undefined symbols. OOP considered harmful.
-def _read_item(reader, name_size, header_metadata_size, file_size):
-    buf = reader._read(name_size + header_metadata_size)
-    name, header_metadata = buf[:name_size], buf[name_size:]
+def _read_item(reader, name_size, item_metadata_size, file_size):
+    buf = reader._read(name_size + item_metadata_size)
+    name, item_metadata = buf[:name_size], buf[name_size:]
 
     try:
         name_str = name.decode("utf8")
@@ -311,30 +379,42 @@ def _read_item(reader, name_size, header_metadata_size, file_size):
     except (UnicodeDecodeError, InvalidArchivePathError):
         raise MalformedInputError("invalid name found in archive: " + repr(name)) from None
 
-    return Item(name_str, file_size, header_metadata)
+    return Item(name_str, file_size, item_metadata)
 
-def _read_from_decompressor(decompressor, file, n, allow_eof=False, buffer_size=0x4000):
-    if n == 0:
-        # While the file.read() and BZ2Decompressor API treats -1 as infinity,
-        # the zlib.Decompress API treats 0 as infinity, so we can't allow this value to flow through this function.
-        return b''
-
+def _read_from_decompressor(decompressor, file, decompressed_len, *, compressed_read_limit=None, allow_eof=False, unused_data_from_previous_stream=None):
     result = b''
     while True:
+        remaining = decompressed_len - len(result)
+        if remaining == 0:
+            # MAINTAINER NOTE: While the file.read() and BZ2Decompressor API treat -1 as infinity,
+            # the zlib.Decompress API treats 0 as infinity, so we can't allow this value to flow through here.
+            break
+
         # Note that you have to check EOF first, as the zlib.Decompress object leaves junk in the other fields once EOF has been hit.
-        if decompressor.eof:
-            break
-        buf = b''
+        if decompressor.eof: break
+
+        if unused_data_from_previous_stream:
+            result += decompressor.decompress(unused_data_from_previous_stream, remaining)
+            unused_data_from_previous_stream = None
+            continue
         if decompressor.unconsumed_tail:
-            buf += decompressor.decompress(decompressor.unconsumed_tail, n - len(result))
-        if not decompressor.unconsumed_tail:
-            buf += decompressor.decompress(file.read(buffer_size), n - len(result))
-        if len(buf) == 0:
+            result += decompressor.decompress(decompressor.unconsumed_tail, remaining)
+            continue
+
+        # Read more data from the file and feed it to the decompressor.
+        if compressed_read_limit != None:
+            chunk = file.read(min(compressed_read_limit, default_chunk_size))
+            compressed_read_limit -= len(chunk)
+        else:
+            chunk = file.read(default_chunk_size)
+        if len(chunk) == 0:
+            # This is going to result in an error.
             break
-        result += buf
-        if len(result) >= n:
-            break
-    if len(result) == n: return result
+        #print("input: " + repr(chunk), file=sys.stderr)
+        result += decompressor.decompress(chunk, remaining)
+
+    #print("output({},{}): {}".format(decompressed_len, compressed_read_limit, repr(result)), file=sys.stderr)
+    if len(result) == decompressed_len: return result
     if allow_eof and len(result) == 0: return b''
     raise MalformedInputError("unexpected end of stream")
 

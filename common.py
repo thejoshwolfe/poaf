@@ -44,6 +44,11 @@ class FeatureFlags:
         if value == 0: return COMPRESSION_NONE
         if value == 1: return COMPRESSION_DEFLATE
         assert False, "call validate_flags() first"
+    def no_compression(self): return (self.flags & 0x03) == 0
+    def deflate(self):        return (self.flags & 0x03) == 1
+    def compression_method_supports_eof(self):
+        return not self.no_compression()
+
     def streaming(self): return bool(self.flags & 0x04)
     def index(self):     return bool(self.flags & 0x08)
     def crc32(self):     return bool(self.flags & 0x10)
