@@ -10,24 +10,24 @@ Use cases that involve making incremental modifications to an existing archive f
 This format is not necessarily recommended in a context where widespread adoption is meaningfully beneficial, as this is a new format as of 2025.
 But that's how innovation works, so if you're still reading this, thanks for taking the time to check out this project!
 
-The intended applications of this archive format are what are currently solved by ZIP and TAR:
+Here are some things you might want to do with an archive file format that this new format is trying to do better than ZIP and TAR:
 * Packaging content for wide distribution. e.g. Making a highly compressed release tarball.
-* Packaging content on the fly for download. e.g. Downloading a snapshot of a git repo as archive.
+* Packaging content on the fly for download. e.g. Downloading a snapshot of a git repo as an archive.
 * Backing up a directory and preserving OS-specific metadata.
 * Reading a compressed directory in-place. e.g. Extracting individual files from a `.jar`, `.docx`, `.apk`, etc.
 * Transferring ephemeral information directly between software programs. e.g. Sending a build context to the docker daemon.
 
-See also What's Wrong With ZIP/TAR? below.
+See also Vs Other Archive Formats below.
 
 ## Terminology
 
 An archive is a file containing metadata and 0 or more items.
-An item has a name and contents, each a sequence of bytes, and possibly other metadata.
+An item has a name and contents, each a sequence of bytes, and metadata.
 Metadata is a sequence of entries, each entry containing a tag and data; see the documentation on Metadata for full details.
 
 The items are the primary payload of the archive.
 For example, an archive containing items named `README.md` and `LICENSE.md` would be typical for archiving a software project.
-The contents of these items would the text of the documents.
+The contents of these items would be the text of the documents.
 
 While items typically correspond to files on a file system outside the archive, it is out of scope of this format specification to define the implementation details of how item data is provided during the creation of an archive or how it is used when reading an archive.
 Instead, this format specification places constraints on what kind of information must be or can be known at certain times throughout the creation and reading of an archive while maintaining an upper bound on the required general-purpose memory.
@@ -654,16 +654,64 @@ If it's a widely-applicable use case, it should be added to the official specifi
 If it's a niche use case, it should be reserved in the specification so other implementations don't collide.
 
 
-## What's Wrong With ZIP/TAR?
+## Vs Other Archive Formats
 
-Many of the problems with ZIP and TAR can be excused due to how old the formats are (1989 and 1979 respectively).
-The format's adequate feature set and long tenure has led to widespread adoption, but it's not without drawbacks.
-There is still plenty of room for innovation in this space.
+I have looked into the details of ZIP, TAR, RAR, and 7z and taken all the good parts of all of them.
+
+#### ZIP
+
+ZIP is perhaps the most problematic archive format in popular use today.
+The specification, called APPNOTE, maintained by PKWARE, Inc. is the source of the format's problems.
+The specification and file format have numerous serious ambiguities which lead to developer frustration,
+bugs that sometimes have security implications, and disagreement over what really counts as "compliant" with the specification.
+The following discussion is in reference to APPNOTE version 6.3.10 timestamped Nov 01, 2022.
+
+[APPNOTE.txt](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT) is an old document that has not been modernized since the early 1980s.
+The plain text format could have been a charming stylistic curiosity if it weren't for all the other long-standing problems with the document,
+which suggests the 1980s formatting is further evidence of PKWARE's unwillingness to take accountability for document's quality.
+
+The use of ISO verbs ("SHALL", "MAY", etc.) is incorrect.
+For example, `4.3.8  File data` specifies that file data "SHOULD" be placed after the local file header,
+when really that's the only place for it to be, so it needn't have any ISO verb, but "SHALL" would be the appropriate one.
+I believe that whoever added the ISO verbs in version 6.3.3 in 2012 thought that "SHOULD" was how you allowed for 0-length file data arguably existing or not existing based on your philosophical beliefs, which is not appropriate for a technical specification.
+Other examples include `4.4.1.4`, and probably many more that I'm not going to bother enumerating; try reading the document yourself, and you'll see what I mean.
+
+Another clue about the problems with APPNOTE is that it includes numerous advertisements for PKWARE proprietary technology with contact information for their sales department encouraging the reader to purchase a license.
+I understand that businesses have a job to do (literally) that requires earning money, and PKWARE owns the APPNOTE document
+(actually, this is legally dubious) and so it makes sense that they would serve their business interests in a document that is probably major entrypoint for people learning that PKWARE even exists as a company.
+My criticism is not with their desire to run a for-profit business, it's with how the maintainers of the document have chosen to spend their time;
+they have bothered to include advertisements for proprietary technology without cleaning up the fundamental problems with the format.
+
+And now to talk about the most fundamental problems with the format, which is that both the APPNOTE document and the format itself are ambiguous.
+Ambiguity means that the same ZIP file could be read by two different ZIP readers and found to contain completely different contents.
+And ambiguity in the specification means that the implementors of both readers could reasonably believe that theirs is the more compliant and correct interpretation.
+Ambiguity is a serious problem, not just for bug-free usability, but for security.
+If a security scanner finds that an archive contains one set of contents, and then an application finds a different set of contents, you can see how that would lead to problems.
+This [actually happened in the Android operating system](https://googlesystem.blogspot.com/2013/07/the-8219321-android-bug.html),
+but thankfully the problem was caught by security researchers before any known instances of the exploit affected any end user.
+[Here's another long discussion](https://gynvael.coldwind.pl/?id=682) by security researcher Gynvael Coldwind of how structural ambiguities in the ZIP file format can be used to exploit naive reader implementations.
+
+Here are some structural ambiguities in the file format. These are real bad:
+* When searching for the eocdr (End of Central Directory Record), do you search backward from a minimum comment length or forward from a maximum comment length? If you find multiple signatures, is that an error, or is one of them authoritative? Can unused data be after the eocdr, which would make searching for the signature unbounded through the whole archive?
+* When streaming the archive through a reader, if you encounter general purpose bit 3 and compression method 0, how do you know when the file data has ended? This is explicitly supported by the specification in `4.4.4` with the phrase "newer versions of PKZIP recognize this bit for any compression method". The data descriptor, which apparently exists to solve this problem, is identified by either a signature or a crc32 of the file data contents, but that can be maliciously inserted into the file data.
+* What is the size of the data descriptor? `4.3.9.1` states "For ZIP64(tm) format archives, the compressed and uncompressed sizes are 8 bytes each.", but nowhere is a definitive definition of what a ZIP64 format archive is. ZIP64 is an extension that can be enabled on individual headers and/or at the very end of the central directory. If the central location is what makes an entire archive in ZIP64 format, then the data descriptor is useless for streaming readers, which according to my read of the specification is the entire purpose of the data descriptor. If instead a data descriptor has 8-byte sizes when the corresponding local file header has the ZIP64 extra field, then it means the writer of the archive would either have needed to know the size would exceed 4GiB, thereby defeating the purpose of general purpose bit 3, or pessimistically needed to prepare for that possibility and spend an extra 24 bytes in the local file header writing an effectively empty ZIP64 extra field. Is that pessimism really the recommendation of the specification?
+* When checking for ZIP64 format at the end of the central directory, a reader must check for the Zip64 End of Central Directory Locator signature `0x07064b50` 20 bytes before the eocdr. If the signature is found, then it's the start of the Zip64 End of Central Directory Locator structure. If not, then it's probably part of the last central directory header. In Windows archives, this data is part of the NTFS timestamp extra field. This means that files archived with a particular timestamp could corrupt the archive, incorrectly signaling the presence of ZIP64 structures.
+
+Here are some ambiguities in the specification:
+* `4.3.6 Overall .ZIP file format:` gives a diagram of a zip file with no allowance for unused space or overlap between structures. This diagram is the most eye-catching first-impression that someone is likely to notice in the document. However, this diagram contradicts other claims made in `4.1.9` stating that a ZIP file may be a self-extracting archive; no discussion is given about the implications of self-extraction capabilities on the structure of the archive, but it means that there must be space at the start of the file that is not included in the archive.
+* `4.3.1` states 'A ZIP file MUST have only one "end of central directory record".', but does not elaborate on what that means. This is likely an attempt to resolve ambiguities when searching backwards for the structure, but several critical details are left unspecified, such as whether simply the 4-byte signature is what must occur only once, or whether it must occur only within the last 64k of the archive where an eocdr could reasonbly be found, or whether any ambiguity should be resolved by using the last one found, or what. This leads me to believe that whoever added this clause in version 6.3.3 in 2012 did not understand the problem with eocdr search ambiguity.
+* `4.3.1` states "Files MAY be added or replaced within a ZIP file, or deleted.", but this is never elaborated on. These operations are irrelevant for a file format specification; they are more applicable to software that operates on archives. One might read into the claim that unused space may be left in various places throughout the format, but that's never explicitly stated, and there are no stated bounds on where the unused space can be. For example, can there be unused space between central director headers? Unused space at the end of extra field records is intentionally inserted by the Android development tool [zipalign](https://developer.android.com/tools/zipalign); is that supposed to be allowed?
+
+Here are some other minor criticisms of the ZIP file format. If ZIP files weren't so problematic, these would be the comparison points you'd like to see in some kind of concise table.
+* Compression and checksums only cover file contents, not file metadata.
+* The structure of an archive is so unconstrained that regions of the archive could be encoded out of order or even overlapping one another. This leads to exploits like the [zip bomb technique used by David Fifield](https://www.bamsoftware.com/hacks/zipbomb/) for extreme compression, which can be a security concern.
 
 One area of deficiency is the supported use case constraints for creating and reading archives.
 For example, neither ZIP nor TAR supports streaming an archive where the size of an item is unknown before beginning to stream it.
 (ZIP General Purpose Bit 3 doesn't count, because it's design is incorrect, and consequently it's not widely supported.)
 While TAR supports streaming items one at a time, it does not support a central index, which is often desired in modern contexts, such as in `.deb` archives which use a combination of two `.tar` files in a `.a` archive, where the first TAR contains a file that lists the files in the second `.tar`.
+
+TODO: research `.rar` and `.7z` formats.
 
 #### General problems
 
