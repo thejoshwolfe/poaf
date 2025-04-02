@@ -426,7 +426,7 @@ Note that it would never be useful to locate a 0-sized `file_size` in the Data R
 
 If Compression Method is not None, then each `previous_stream_compressed_size` can be 0, which means an unspecified value, or non-zero, which means a compression stream starts at the corresponding `file_contents` in the Data Region.
 The start of every compression stream after the first one in the Data Region must correspond to a non-zero `previous_stream_compressed_size` value in the Index Region.
-A compression stream must not start at a 0-size `file_contents`, which means evert item with a `file_size` of 0 must also have a `previous_stream_compressed_size` of 0;
+A compression stream must not start at a 0-size `file_contents`, which means every item with a `file_size` of 0 must also have a `previous_stream_compressed_size` of 0;
 this is to prevent ambiguity in the structure of the archive and it would never be useful to locate a 0-sized `file_size` anyway.
 
 A reader can effectively use the below pseudocode to compute the `stream_start_offset` and `skip_bytes` to jump into the middle of an archive for any item:
@@ -546,9 +546,8 @@ The order of multiple metadata entries with the same `tag` is specified for each
 
 The below columns indicate: the tag value, whether the entry is allowed in `archive_metadata`, whether the metadata field is allowed in `item_metadata`, whether multiple of the same tag can appear in one metadata, and the name of the section below explaining the entry in more detail.
 
-+---------+---------+------+------+------------+
 | Tag     | Archive | Item | Dupe | Meaning    |
-+---------+---------+------+------+------------+
+|---------|---------|------|------|------------|
 | 0       | No      | No   | No   | `FileType` |
 | 1-127   | Yes     | Yes  | -    | Reserved   |
 | 128     | No      | No   | No   | `PosixAttributes` |
@@ -556,22 +555,19 @@ The below columns indicate: the tag value, whether the entry is allowed in `arch
 | 130-253 | Yes     | Yes  | Yes  | Ignored    |
 | 254     | Yes     | Yes  | Yes  | `Comment`  |
 | 255     | Yes     | Yes  | Yes  | `Padding`  |
-+---------+---------+------+------+------------+
 
 #### `FileType` (0)
 
 The `data` is a single byte encoding one of the following file types:
 
-+-------+------------------+
 | value | Meaning          |
-+-------+------------------+
+|-------|------------------|
 | 0     | Regular file     |
 | 1     | POSIX executable |
 | 2     | Directory/folder |
 | 3     | Symlink          |
-| 4-254 | Reserved          |
+| 4-254 | Reserved         |
 | 255   | Other            |
-+-------+------------------+
 
 If this tag is missing from an item, it is equivalent to a value of 0: Regular file.
 On POSIX, a value of 0 indicates the file is not executable.
@@ -674,12 +670,12 @@ The use of ISO verbs ("SHALL", "MAY", etc.) is incorrect.
 For example, `4.3.8  File data` specifies that file data "SHOULD" be placed after the local file header,
 when really that's the only place for it to be, so it needn't have any ISO verb, but "SHALL" would be the appropriate one.
 I believe that whoever added the ISO verbs in version 6.3.3 in 2012 thought that "SHOULD" was how you allowed for 0-length file data arguably existing or not existing based on your philosophical beliefs, which is not appropriate for a technical specification.
-Other examples include `4.4.1.4`, and probably many more that I'm not going to bother enumerating; try reading the document yourself, and you'll see what I mean.
+Other examples include `4.3.14.1`, `4.4.1.4`, and probably many more that I'm not going to bother enumerating; try reading the document yourself, and you'll see what I mean.
 
 Another clue about the problems with APPNOTE is that it includes numerous advertisements for PKWARE proprietary technology with contact information for their sales department encouraging the reader to purchase a license.
 I understand that businesses have a job to do (literally) that requires earning money, and PKWARE owns the APPNOTE document
-(actually, this is legally dubious) and so it makes sense that they would serve their business interests in a document that is probably major entrypoint for people learning that PKWARE even exists as a company.
-My criticism is not with their desire to run a for-profit business, it's with how the maintainers of the document have chosen to spend their time;
+(actually, this is legally dubious) and so it makes sense that they would serve their business interests in a document that is probably a major entrypoint for people learning that PKWARE even exists as a company.
+My criticism is not with their desire to run a for-profit business; it's with how the maintainers of the document have chosen to spend their time;
 they have bothered to include advertisements for proprietary technology without cleaning up the fundamental problems with the format.
 
 And now to talk about the most fundamental problems with the format, which is that both the APPNOTE document and the format itself are ambiguous.
@@ -699,12 +695,17 @@ Here are some structural ambiguities in the file format. These are real bad:
 
 Here are some ambiguities in the specification:
 * `4.3.6 Overall .ZIP file format:` gives a diagram of a zip file with no allowance for unused space or overlap between structures. This diagram is the most eye-catching first-impression that someone is likely to notice in the document. However, this diagram contradicts other claims made in `4.1.9` stating that a ZIP file may be a self-extracting archive; no discussion is given about the implications of self-extraction capabilities on the structure of the archive, but it means that there must be space at the start of the file that is not included in the archive.
-* `4.3.1` states 'A ZIP file MUST have only one "end of central directory record".', but does not elaborate on what that means. This is likely an attempt to resolve ambiguities when searching backwards for the structure, but several critical details are left unspecified, such as whether simply the 4-byte signature is what must occur only once, or whether it must occur only within the last 64k of the archive where an eocdr could reasonbly be found, or whether any ambiguity should be resolved by using the last one found, or what. This leads me to believe that whoever added this clause in version 6.3.3 in 2012 did not understand the problem with eocdr search ambiguity.
+* `4.3.1` states 'A ZIP file MUST have only one "end of central directory record".', but does not elaborate on what that means. This is likely an attempt to resolve ambiguities when searching backwards for the structure, but several critical details are left unspecified, such as whether simply the 4-byte signature is what must occur only once, or whether it must occur only within the last 64k of the archive where an eocdr could reasonably be found, or whether any ambiguity should be resolved by using the last one found, or what. This leads me to believe that whoever added this clause in version 6.3.3 in 2012 did not understand the problem with eocdr search ambiguity.
 * `4.3.1` states "Files MAY be added or replaced within a ZIP file, or deleted.", but this is never elaborated on. These operations are irrelevant for a file format specification; they are more applicable to software that operates on archives. One might read into the claim that unused space may be left in various places throughout the format, but that's never explicitly stated, and there are no stated bounds on where the unused space can be. For example, can there be unused space between central director headers? Unused space at the end of extra field records is intentionally inserted by the Android development tool [zipalign](https://developer.android.com/tools/zipalign); is that supposed to be allowed?
+* It is unclear whether small values overridden by ZIP64 extended values must be `-1` i.e. `0xFFFF`, `0xFFFFFF`. This happens in sections `4.4.{8,9,13,16,19,20,21,22,23,24}`. Each of these sections states "If an archive is in ZIP64 format and the value in this field is [-1], the size will be in the corresponding [larger] zip64 end of central directory field.". So if a reader encounters an archive in ZIP64 format and a value is not `-1`, should it still be overridden by the ZIP64 values? Are `-1` values necessary to appear before checking for the ZIP64 format (which can cause ambiguity as stated above)?
+* Generally nobody cares about multi-disk support, but `4.4.19 number of this disk` is specified wrong. It states that it's the disk number "which contains central directory end record", which is not a phrase used elsewhere and it's not clear whether that refers to the "end of central directory record" or the "zip64 end of central directory record", which can be on different disks. If each field refers to the struct that contains the field, as the name itself suggests, then one doesn't override the other, because they represent different values. Really, the 16-bit "number of this disk" field is overridden by the 32-bit "total number of disks" field, which encodes the same value but plus 1. Good luck implementing support for more than 65535 disks.
+* Speaking of unclear names, APPNOTE can't seem to decide on what to call different structures and fields. The terms "directory" and "dir" seem to be used interchangeably to refer to the same thing. The "End of central directory record" contains an "end of central dir signature", and the field "total number of entries in the central directory on this disk" is sometimes referred to as "total number of entries in the central dir on this disk".
+* The character encoding for file names and comments was undefined until APPNOTE 6.3.0 in 2006, where the default character encoding is defined to be "IBM Code Page 437". There are two conflicting definitions of this code page for values in the range 1-31. IBM defines the characters to be various dingbats, whereas Unicode defines the characters to be ASCII control characters with the same name. Info-ZIP uses the Unicode definition.
 
 Here are some other minor criticisms of the ZIP file format. If ZIP files weren't so problematic, these would be the comparison points you'd like to see in some kind of concise table.
 * Compression and checksums only cover file contents, not file metadata.
 * The structure of an archive is so unconstrained that regions of the archive could be encoded out of order or even overlapping one another. This leads to exploits like the [zip bomb technique used by David Fifield](https://www.bamsoftware.com/hacks/zipbomb/) for extreme compression, which can be a security concern.
+
 
 One area of deficiency is the supported use case constraints for creating and reading archives.
 For example, neither ZIP nor TAR supports streaming an archive where the size of an item is unknown before beginning to stream it.
