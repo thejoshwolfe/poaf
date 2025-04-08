@@ -124,18 +124,18 @@ A file is a sequence of bytes that can be accessed in one of the following modes
 * streaming read
 * random-access read
 
-The input to the process of creating an archive is a stream of items, and the output is an archive file accessible for streaming writing.
+The input to the process of writing an archive is a stream of items, and the output is an archive file accessible for streaming writing.
 There are two ways to read an archive.
 The input to the process of streaming reading an archive is an archive file accessible for streaming reading, and the output is a stream of the archive's items.
 The input to the process of random-access reading an archive is an archive file accessible for random-access reading, and the output is any subset of the archive's items in any order.
 
 While the number of items in an archive, the size of the archive, and the size of each item's contents are all unbounded,
-the amount of memory strictly required during any creation or reading operation is always bounded.
+the amount of memory strictly required during any writing or reading operation is always bounded.
 The computational complexity analysis in this specification (when values are "bounded") considers 16-bit sizes (up to 65535 bytes) to be negligible, and 64-bit sizes (more than 65535 bytes) to be effectively unbounded.
 For example, a file name has a length up to 16383 bytes, which effectively requires worst-case constant memory to store and is not a concern,
 while an item contents with a length up to 18446744073709551615 bytes effectively requires worst-case infinite memory to store which is never required.
 
-In addition to memory, a tempfile is required during the creation process in support of random-access reading.
+In addition to memory, a tempfile is sometimes required during the writing process in support of random-access reading.
 A tempfile is a sequence of bytes with an unbounded required size that is written once in a streaming mode, then read back once in a streaming mode.
 The required size of the tempfile scales with the number of items, not any item contents.
 The term tempfile is a suggestion hint for implementers, but could be implemented by an in-memory buffer at the implementer's discretion.
@@ -143,8 +143,6 @@ The term tempfile is a suggestion hint for implementers, but could be implemente
 In addition to the terms defined above, this specification also refers to the following terms defined beyond the scope of this document:
 CRC32, DEFLATE, UTF-8.
 See References at the end of this document for links to these definitions.
-
-TODO: cleanup inconsistency between "writing" and "creating".
 
 ## Spec
 
@@ -160,7 +158,7 @@ There are 4 regions to an archive:
 4. (optional) `ArchiveFooter`: Uncompressed
 
 A writer produces each of these sections in order.
-A writer may require a tempfile to create the Index Region on the side while producing the Data Region,
+A writer may require a tempfile to write the Index Region on the side while producing the Data Region,
 then concatenate the Index Region after the Data Region is done.
 
 A streaming reader only needs to read the `ArchiveHeader`, then the Data Region.
@@ -455,7 +453,7 @@ There are some restrictions placed on `file_name` fields to mitigate compatibili
 However note that readers must be prepared to check for and handle problems.
 Notably, duplicate file names are not inherently forbidden by this archive format,
 and collisions between items are possible even when there is no obvious similarity between item names.
-A writer should avoid creating name collisions,
+A writer should avoid causing name collisions,
 but a reader must always guard against collisions in whatever environment the reader is operating in.
 
 Collisions and other problems with writing a file with a given name to a file system can happen in numerous non-obvious circumstances.
