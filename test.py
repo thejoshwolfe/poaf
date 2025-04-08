@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 
+# TODO: make a test with a compression stream that can be jumped in from multiple offsets, resulting in overlapping data regions:
+#   data = b'\x00\x05\x00\xFA\xFF' + b'\x00\x00\x00\xFF\xFF' + b'\x03\x00'
+#   decompress(data) # succeeds
+#   decompress(data[5:]) # also succeeds
+# This should be result in a streaming reader catching an error with unexpected `jump_location` or something probably.
+
 import os
 import subprocess
 import tempfile
@@ -24,9 +30,10 @@ def main():
 
     for options in (tuple(itertools.chain(*v)) for v in itertools.product(
         [(), ("--no-index",), ("--no-streaming",)],
+        [(), ("--no-crc32",)],
         [(), ("--stream-split-threshold=0",), ("--no-compression",)],
 
-        #[("--no-compression",)],
+        #[("--some-specific-test",)],
     )):
         print("testing: " + " ".join(options))
         # Create

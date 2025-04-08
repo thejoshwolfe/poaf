@@ -2,8 +2,8 @@
 
 import sys, os
 import struct
-import io
 import zlib
+import tempfile
 
 from common import *
 
@@ -19,12 +19,11 @@ def main():
 
     if args.extract and not args.items:
         # Streaming extract everything
-        with StreamReader(args.archive, False) as reader:
+        with StreamReader(args.archive) as reader:
             for item in reader:
-                with open(os.path.join(args.extract, item.name), "wb") as f:
-                    while not item.read_complete():
-                        buf = reader.read_from_item(item, default_chunk_size)
-                        f.write(buf)
+                with open(os.path.join(args.extract, item.file_name_str), "wb") as f:
+                    while not item.done:
+                        f.write(reader.read_from_item(item))
     else:
         specific_items = set(args.items)
         found_items = set()
@@ -32,16 +31,14 @@ def main():
             for item in reader:
                 if len(specific_items) == 0:
                     # Just list
-                    print(item.name)
-                elif item.name in specific_items:
+                    print(item.file_name_str)
+                elif item.file_name_str in specific_items:
                     # Extract this item.
-                    found_items.add(item.name)
-                    with reader.open_item_reader(item) as input:
-                        with open(os.path.join(args.extract, item.name), "wb") as output:
-                            while True:
-                                buf = input.read(default_chunk_size)
-                                if len(buf) == 0: break
-                                output.write(buf)
+                    found_items.add(item.file_name_str)
+                    with reader.open_item_reader(item) as item_reader:
+                        with open(os.path.join(args.extract, item.file_name_str), "wb") as output:
+                            while not item_reader.done:
+                                output.write(item_reader.read_chunk())
         missing_items = specific_items - found_items
         if len(missing_items) > 0:
             sys.exit("\n".join([
@@ -52,10 +49,7 @@ def main():
 default_chunk_size = 0x400
 
 class StreamReader:
-    def __init__(self, archive_path, should_validate_index):
-        self.should_validate_index = should_validate_index
-        if self.should_validate_index: raise NotImplementedError
-
+    def __init__(self, archive_path, validate_index=True):
         self._input = open(archive_path, "rb")
         try:
             # ArchiveHeader
@@ -63,16 +57,18 @@ class StreamReader:
             if archive_header[0:3] != archive_signature: raise MalformedInputError("not an archive")
             self.flags = FeatureFlags(archive_header[3])
 
-            if not self.flags.streaming(): raise IncompatibleInputError("archive does not support streaming")
-            self._start_stream(self._input.tell())
+            if not self.flags.streaming: raise IncompatibleInputError("archive does not support streaming")
+            if self.flags.compression:
+                self._decompressor = Decompressor()
 
-            # ArchiveMetadata
-            archive_metadata_size = struct.unpack("<H", self._read(2))[0]
-            archive_metadata = self._read(archive_metadata_size)
+            self.validating_index = validate_index and self.flags.index
+            if self.validating_index:
+                self._index_tmpfile = tempfile.TemporaryFile()
+                if self.flags.crc32:
+                    self._index_crc32 = 0
         except:
             self._input.close()
             raise
-        self._remaining_bytes_in_current_contents = 0
         self._current_item = None
 
     def __enter__(self):
@@ -83,101 +79,197 @@ class StreamReader:
         return self
 
     def close(self):
-        self._input.close()
-        if self.flags.no_compression(): pass
-        elif self.flags.deflate():
+        if self.flags.compression:
             self._decompressor = None
-        else: assert False
+        try:
+            if self.validating_index:
+                self._index_tmpfile.close()
+        finally:
+            self._input.close()
 
     def __next__(self):
-        if self._current_item != None: raise ValueError("call read_from_item() until EOF before reading then next item")
+        if self._current_item != None: raise ValueError("call read_from_item until done")
 
-        expect_sentinel = self.flags.streaming() and self.flags.index() and not self.flags.compression_method_supports_eof()
+        expect_sentinel = self.flags.streaming and self.flags.index and not self.flags.compression
 
         # StreamingItem
-        buf = self._read(16, allow_eof=not expect_sentinel)
-        if len(buf) == 0: raise StopIteration
+        buf = self._read(4, allow_eof=not expect_sentinel)
+        if len(buf) == 0:
+            self._done_reading_data_region()
+            raise StopIteration
 
-        if buf[0:4] != item_signature: raise MalformedInputError("item signature not found")
-        (
-            name_size,
-            item_metadata_size,
-            file_size,
-        ) = struct.unpack("<HHQ", buf[4:16])
+        if buf[0:2] != item_signature: raise MalformedInputError("item signature not found")
+        (type_and_name_size,) = struct.unpack("<H", buf[2:])
+        file_type, name_size = type_and_name_size >> 14, type_and_name_size & 0x3FFF
 
-        if expect_sentinel:
-            if name_size == item_metadata_size == file_size == 0:
-                # Actually a DataRegionSentinel.
-                raise StopIteration
+        if expect_sentinel and type_and_name_size == 0:
+            # Actually a StreamingSentinel.
+            self._done_reading_data_region()
+            raise StopIteration
 
         # Read the rest of the StreamingItem.
-        item = _read_item(self, name_size, item_metadata_size, file_size)
+        name = self._read(name_size)
+        file_name_str = _validate_archive_path(name)
+
+        if self.flags.crc32:
+            streaming_crc32 = zlib.crc32(buf)
+            streaming_crc32 = zlib.crc32(name, streaming_crc32)
+        else:
+            streaming_crc32 = None
+
+        item = StreamingItem(file_type, file_name_str, streaming_crc32)
+
+        if self.flags.index and not self.flags.compression:
+            # Every jump_location is set when compression is not enabled.
+            item._predicted_index_item.jump_location = self._input.tell()
 
         self._current_item = item
-        self._remaining_bytes_in_current_contents = file_size
         return item
 
-    def read_from_item(self, item, size=-1):
-        assert self._current_item == item
+    def read_from_item(self, item, size_limit=0xFFFFFFFFFFFFFFFF):
+        if self._current_item != item: raise ValueError("that's not the current item.")
 
-        # StreamingItem.file_contents
-        if size < 0:
-            size = self._remaining_bytes_in_current_contents
-        else:
-            size = min(size, self._remaining_bytes_in_current_contents)
+        # Check for stream split before StreamingItem chunked contents.
+        allow_eof = self.flags.compression and item._predicted_index_item.file_size == 0
+        chunk_size_buf = self._read(2, allow_eof=allow_eof)
+        if len(chunk_size_buf) == 0:
+            # Found a stream split.
+            assert self.flags.compression
+            assert self._decompressor.eof
+            unused_data = self._decompressor.unused_data
+            unused_data_len = len(unused_data)
+            if self.flags.index:
+                item._predicted_index_item.jump_location = self._input.tell() - unused_data_len
+            self._decompressor = Decompressor()
 
-        at_the_start = False
-        if item.previous_stream_compressed_size == None:
-            # At the very start, there could be an EOF.
-            assert self._remaining_bytes_in_current_contents == item.file_size
-            at_the_start = True
+            # Try again
+            chunk_size_buf = self._read(2, unused_data_from_previous_stream=unused_data)
 
-        buf = self._read(size, allow_eof=at_the_start)
+        # StreamingItem chunked contents
+        (chunk_size,) = struct.unpack("<H", chunk_size_buf)
+        buf = self._read(chunk_size)
+        item.done = len(buf) < 0xFFFF
 
-        if at_the_start:
-            if size > 0 and len(buf) == 0:
-                # Found a stream split.
-                if self.flags.no_compression(): assert False
-                elif self.flags.deflate():
-                    assert self._decompressor.eof
-                    unused_data = self._decompressor.unused_data
-                    unused_data_len = len(unused_data)
-                else: assert False
-                offset = self._input.tell() - unused_data_len
-                item.previous_stream_compressed_size = offset - self._stream_start
-                self._start_stream(offset)
+        # Track file size
+        item._predicted_index_item.file_size += len(buf)
+        if item._predicted_index_item.file_size > size_limit: raise ItemContentsTooLongError
 
-                # Try again.
-                buf = self._read(size, unused_data_from_previous_stream=unused_data)
-            else:
-                item.previous_stream_compressed_size = 0
+        # Compute crc32
+        if self.flags.crc32:
+            item.streaming_crc32 = zlib.crc32(chunk_size_buf, item.streaming_crc32)
+            item.streaming_crc32 = zlib.crc32(buf,            item.streaming_crc32)
+            if self.flags.index:
+                item._predicted_index_item.contents_crc32 = zlib.crc32(buf, item._predicted_index_item.contents_crc32)
 
-        self._remaining_bytes_in_current_contents -= size
-
-        # Check for done.
-        if self._remaining_bytes_in_current_contents == 0:
-            # StreamingItem.checksums
-            item.checksums = self._read(self.flags.checksums_size())
+        if item.done:
             self._current_item = None
 
+            # StreamingItem streaming_crc32
+            if self.flags.crc32:
+                (documented_streaming_crc32,) = struct.unpack("<L", self._read(4))
+                if item.streaming_crc32 != documented_streaming_crc32:
+                    raise MalformedInputError("streaming_crc32 check failed. calculated: {}, documented: {}".format(item.streaming_crc32, documented_streaming_crc32))
+
+            # IndexItem
+            if self.validating_index:
+                index_item = item._predicted_index_item
+                if self.flags.crc32:
+                    contents_crc32_buf = struct.pack("<L", index_item.contents_crc32)
+                else:
+                    contents_crc32_buf = b""
+                name = index_item.file_name_str.encode("utf8")
+                type_and_name_size = (index_item.file_type << 14) | len(name)
+                self._index_tmpfile.write((
+                    contents_crc32_buf +
+                    struct.pack("<QQH",
+                        index_item.jump_location,
+                        index_item.file_size,
+                        type_and_name_size,
+                    ) +
+                    name
+                ))
         return buf
 
+    def _done_reading_data_region(self):
+        if not self.flags.index:
+            # Ensure we hit EOF.
+            if self.flags.compression:
+                if not (self._decompressor.eof and len(self._decompressor.unconsumed_tail) == 0): raise MalformedInputError("expected EOF after Data Region")
+            if len(self._input.read(1)) != 0: raise MalformedInputError("expected EOF after Data Region")
+            # That's all there is to check.
+            return
+
+        if not self.validating_index:
+            # We're choosing not to validate any more of the archive.
+            return
+
+        index_size_remaining = self._index_tmpfile.tell()
+        self._index_tmpfile.seek(0)
+
+        if self.flags.compression:
+            # Start a new decompression stream.
+            unused_data = self._decompressor.unused_data
+            unused_data_len = len(unused_data)
+            self._decompressor = Decompressor()
+        else:
+            unused_data = None
+            unused_data_len = 0
+        index_region_location = self._input.tell() - unused_data_len
+
+        index_crc32 = 0
+        while index_size_remaining > 0:
+            size = min(index_size_remaining, default_chunk_size)
+            calculated_buf = self._index_tmpfile.read(size)
+            found_buf = self._read(size, unused_data_from_previous_stream=unused_data)
+            unused_data = None
+            index_size_remaining -= size
+
+            assert len(calculated_buf) == size, "tmpfile modified mid-operation?"
+            assert len(found_buf) == size, "allow_eof=False makes this impossible to fail"
+            if calculated_buf != found_buf:
+                raise MalformedInputError("verifying index failed")
+            index_crc32 = zlib.crc32(calculated_buf, index_crc32)
+
+        if self.flags.compression:
+            if not (self._decompressor.eof and len(self._decompressor.unconsumed_tail) == 0): raise MalformedInputError("Index Region compression stream too long")
+            unused_data = self._decompressor.unused_data
+        else:
+            unused_data = b""
+
+        # Validate the ArchiveFooter.
+        archive_footer_size = (4 if self.flags.crc32 else 0) + 12
+        # Ask for 1 too many bytes to make sure we hit EOF.
+        documented_archive_footer = unused_data + self._input.read(max(0, archive_footer_size - len(unused_data) + 1))
+        if len(documented_archive_footer) > archive_footer_size: raise MalformedInputError("expected EOF after ArchiveFooter")
+        if len(documented_archive_footer) < archive_footer_size: raise MalformedInputError("unexpected EOF")
+
+        # Compute what we know the ArchiveFooter should be and compare it all at once.
+        if self.flags.crc32:
+            index_crc32_buf = struct.pack("<L", index_crc32)
+        else:
+            index_crc32_buf = b""
+        index_region_location_buf = struct.pack("<Q", index_region_location)
+        footer_checksum = bytes([0xFF & sum(index_region_location_buf)])
+        calculated_archive_footer = (
+            index_crc32_buf +
+            index_region_location_buf +
+            footer_checksum +
+            footer_signature
+        )
+
+        if documented_archive_footer != calculated_archive_footer: raise MalformedInputError("ArchiveFooter is wrong")
+
+        # Everything's good.
+
     def _read(self, n, *, allow_eof=False, unused_data_from_previous_stream=None):
-        if self.flags.no_compression():
+        if self.flags.compression:
+            return _read_from_decompressor(self._decompressor, self._input, n, allow_eof=allow_eof, unused_data_from_previous_stream=unused_data_from_previous_stream)
+        else:
             assert unused_data_from_previous_stream == None
             buf = self._input.read(n)
             if len(buf) == 0 and allow_eof: return buf
             if len(buf) < n: raise MalformedInputError("unexpected EOF")
             return buf
-        elif self.flags.deflate():
-            return _read_from_decompressor(self._decompressor, self._input, n, allow_eof=allow_eof, unused_data_from_previous_stream=unused_data_from_previous_stream)
-        else: assert False
-    def _start_stream(self, stream_start):
-        if self.flags.no_compression(): pass
-        elif self.flags.deflate():
-            self._decompressor = Decompressor()
-        else: assert False
-        self._stream_start = stream_start
 
 class IndexReader:
     def __init__(self, archive_path):
@@ -190,37 +282,36 @@ class IndexReader:
             self.flags = FeatureFlags(archive_header[3])
             data_region_start = 4
             self._stream_start = data_region_start
+            self._skip_bytes_since_stream_start = 0
 
-            if not self.flags.index(): raise IncompatibleInputError("archive does not support random access")
+            if not self.flags.index: raise IncompatibleInputError("archive does not support random access")
 
             # ArchiveFooter
             self._file_size = self._input.seek(0, os.SEEK_END)
-            archive_footer_size = self.flags.checksums_size() + 12
+            archive_footer_size = (4 if self.flags.crc32 else 0) + 12
             self.archive_footer_start = self._file_size - archive_footer_size
-            if not (data_region_start < self.archive_footer_start): raise MalformedInputError("unexpected EOF")
+            if not (4 <= self.archive_footer_start): raise MalformedInputError("unexpected EOF")
             self._input.seek(self.archive_footer_start)
+            # archive_footer
             archive_footer = self._input.read(archive_footer_size)
-            if archive_footer[-4:] != footer_signature: raise MalformedInputError("archive footer signature not found. archive truncated?")
-            data_region_compressed_size = struct.unpack("<Q", archive_footer[-12:-4])[0]
-            checksums = archive_footer[:-12]
 
-            index_region_start = data_region_start + data_region_compressed_size
-            if not (index_region_start < self.archive_footer_start): raise MalformedInputError("data_region_compressed_size out of bounds")
+            index_region_location = _validate_archive_footer(archive_footer)
 
-            self._input.seek(index_region_start)
-            if self.flags.no_compression(): pass
-            elif self.flags.deflate():
-                self._decompressor = Decompressor()
-            else: assert False
-
-            # ArchiveMetadata
-            archive_metadata_size = struct.unpack("<H", self._read(2))[0]
-            archive_metadata = self._read(archive_metadata_size)
-            if self.flags.streaming():
-                self._skip_bytes_since_stream_start = 2 + archive_metadata_size
+            if self.flags.compression:
+                if not (data_region_start <= index_region_location < self.archive_footer_start): raise MalformedInputError("index_region_location out of bounds")
             else:
-                self._skip_bytes_since_stream_start = 0
-        except MalformedInputError:
+                if not (data_region_start <= index_region_location <= self.archive_footer_start): raise MalformedInputError("index_region_location out of bounds")
+
+            if self.flags.crc32:
+                (self.index_crc32,) = struct.unpack("<L", archive_footer[0:4])
+                self._calculated_index_crc32 = 0
+
+            # Start the Index Region.
+            self._input.seek(index_region_location)
+            if self.flags.compression:
+                self._decompressor = Decompressor()
+
+        except:
             self._input.close()
             raise
 
@@ -231,89 +322,92 @@ class IndexReader:
     def __iter__(self):
         return self
     def _read(self, n, *, allow_eof=False):
+        # TODO: an fdslicer would be good here.
         limit = self.archive_footer_start - self._input.tell()
-        if self.flags.no_compression():
-            if limit == 0 and allow_eof: return b''
-            if limit < n: raise MalformedInputError("unexpected EOF")
-            buf = self._input.read(n)
-            if len(buf) < n: raise MalformedInputError("file has been edited while reading")
-            return buf
-        elif self.flags.deflate():
+        if self.flags.compression:
+            # Pump more from the decompressor.
             return _read_from_decompressor(self._decompressor, self._input, n, compressed_read_limit=limit, allow_eof=allow_eof)
-        else: assert False
+        # Read directly from the Index Region.
+        if limit == 0 and allow_eof: return b''
+        if limit < n: raise MalformedInputError("unexpected EOF")
+        buf = self._input.read(n)
+        assert len(buf) == n, "file has been edited while reading"
+        return buf
 
     def close(self):
         self._input.close()
-        if self.flags.no_compression(): pass
-        elif self.flags.deflate():
+        if self.flags.compression:
             self._decompressor = None
-        else: assert False
 
     def __next__(self):
         # IndexItem
-        buf = self._read(self.flags.checksums_size() + 20, allow_eof=True)
+        buf = self._read((4 if self.flags.crc32 else 0) + 18, allow_eof=True)
         if len(buf) == 0:
             # Make sure we've actually reached the end of the Index Region.
-            if self.flags.no_compression():
-                unused_data_len = 0
-            elif self.flags.deflate():
+            if self.flags.compression:
                 unused_data_len = len(self._decompressor.unused_data)
-            else: assert False
-            offset = self._input.tell() - unused_data_len
+                offset = self._input.tell() - unused_data_len
+                if offset != self.archive_footer_start: raise MalformedInputError("Index Region compression stream ended too early")
+            # Done with the Index Region.
+            if self.flags.crc32:
+                if self._calculated_index_crc32 != self.index_crc32:
+                    raise MalformedInputError("index_crc32 check failed. calculated: {}, documented: {}".format(self._calculated_index_crc32, self.index_crc32))
             raise StopIteration
-        checksums = buf[:-20]
-        (
-            previous_stream_compressed_size,
-            name_size,
-            item_metadata_size,
-            file_size,
-        ) = struct.unpack("<QHHQ", buf[-20:])
 
-        item = _read_item(self, name_size, item_metadata_size, file_size)
-        item.previous_stream_compressed_size = previous_stream_compressed_size
-        item.checksums = checksums
+        if self.flags.crc32:
+            (contents_crc32,) = struct.unpack("<L", buf[0:-18])
+        else:
+            contents_crc32 = None
+        (
+            jump_location,
+            file_size,
+            type_and_name_size,
+        ) = struct.unpack("<QQH", buf[-18:])
+        file_type, name_size = type_and_name_size >> 14, type_and_name_size & 0x3FFF
+        name = self._read(name_size)
+        file_name_str = _validate_archive_path(name)
+
+        if self.flags.crc32:
+            self._calculated_index_crc32 = zlib.crc32(buf, self._calculated_index_crc32)
+            self._calculated_index_crc32 = zlib.crc32(name, self._calculated_index_crc32)
+
+        item = IndexItem(jump_location, file_size, file_type, file_name_str, contents_crc32)
 
         # Compute offset for random access.
-        if previous_stream_compressed_size > 0:
+        if jump_location == 0 and not self.flags.compression: raise MalformedInputError("every IndexItem.jump_location must be non-zero when Compression is not enabled")
+        if jump_location > 0:
             # This is a stream split
-            item._stream_start = self._stream_start + previous_stream_compressed_size
-            item._skip_bytes_until_contents = 0
-            self._stream_start = item._stream_start
+            self._stream_start = jump_location
             self._skip_bytes_since_stream_start = 0
-        else:
-            # Getting to this item requires starting at a previous item and skipping bytes.
-            item._stream_start = self._stream_start
-            item._skip_bytes_until_contents = self._skip_bytes_since_stream_start
-            if self.flags.streaming():
-                # Account for StreamingItem size before file_contents.
-                item._skip_bytes_until_contents += 16 + name_size + item_metadata_size
-                self._skip_bytes_since_stream_start = item._skip_bytes_until_contents
-            if item.file_size > 0 and self.flags.no_compression() and item._skip_bytes_until_contents != 0:
-                raise MalformedInputError("previous_stream_compressed_size not set in uncompressed archive")
-        # The next offset will skip this item's contents.
+        elif self.flags.streaming:
+            # Skip the corresponding StreamingItem's fields before the contents.
+            self._skip_bytes_since_stream_start += 4 + name_size
+        item._stream_start = self._stream_start
+        item._skip_bytes_until_contents = self._skip_bytes_since_stream_start
+
+        # For the next item, skip the file_contents of this item.
         self._skip_bytes_since_stream_start += file_size
-        if self.flags.streaming():
-            # Account for StreamingItem size after file_contents.
-            self._skip_bytes_since_stream_start += self.flags.checksums_size()
+        if self.flags.streaming:
+            chunking_overhead = 2 * ((file_size // 0xFFFF) + 1)
+            self._skip_bytes_since_stream_start += chunking_overhead
+            if self.flags.crc32:
+                # Also skip the corresponding StreamingItem's fields after the contents.
+                self._skip_bytes_since_stream_start += 4
 
         return item
 
     def open_item_reader(self, item):
-        if item.file_size == 0:
-            # The contents is trivial.
-            return io.BytesIO()
-        # This could have also been done without opening another fd and just seeking all over the place.
+        # TODO: use an fdslicer instead of re-opening the input file.
         f = open(self._archive_path, "rb")
         try:
             f.seek(item._stream_start)
-            if self.flags.no_compression():
-                decompressor = None
-            elif self.flags.deflate():
+            if self.flags.compression:
                 decompressor = Decompressor()
-            else: assert False
+            else:
+                decompressor = None # Appease pylint
             skip_bytes = item._skip_bytes_until_contents
             while skip_bytes > 0:
-                assert not self.flags.no_compression(), "skip_bytes is always 0 for no-compression archives"
+                assert self.flags.compression, "skip_bytes is always 0 for no-compression archives"
                 size = min(skip_bytes, default_chunk_size)
                 skipped_buf = _read_from_decompressor(decompressor, f, size)
                 skip_bytes -= len(skipped_buf)
@@ -322,64 +416,79 @@ class IndexReader:
             f.close()
             raise
 
-class Item:
-    def __init__(self, name, file_size, item_metadata):
-        self.name = name
+class StreamingItem:
+    def __init__(self, file_type, file_name_str, streaming_crc32_so_far):
+        self.file_type = file_type
+        self.file_name_str = file_name_str
+        self.streaming_crc32 = streaming_crc32_so_far
+        self._predicted_index_item = IndexItem(0, 0, file_type, file_name_str, 0)
+        self.done = False
+
+class IndexItem:
+    def __init__(self, jump_location, file_size, file_type, file_name_str, contents_crc32):
+        self.jump_location = jump_location
         self.file_size = file_size
-        self.item_metadata = item_metadata
-        self.previous_stream_compressed_size = None
-        self.checksums = None
-        self._stream_start = None
-        self._skip_bytes_until_contents = None
-    def read_complete(self):
-        return self.checksums != None
+        self.file_type = file_type
+        self.file_name_str = file_name_str
+        self.contents_crc32 = contents_crc32
 
 class ItemReader:
-    """ I haven't learned how to use the io.* OOP family yet. """
-    def __init__(self, flags, decompressor, file, returned_limit):
+    def __init__(self, flags, decompressor, file, file_size):
+        self.done = False
         self.flags = flags
-        if self.flags.no_compression(): pass
-        elif self.flags.deflate():
+        if self.flags.compression:
             self._decompressor = decompressor
-        else: assert False
         self._input = file
-        self._remaining_bytes = returned_limit
+        self._remaining_bytes = file_size
     def __enter__(self):
         return self
     def __exit__(self, *args):
         self._input.close()
-        if self.flags.no_compression(): pass
-        elif self.flags.deflate():
+        if self.flags.compression:
             self._decompressor = None
-        else: assert False
-    def read(self, size=-1):
-        if size < 0:
-            decompressed_len = self._remaining_bytes
+    def read_chunk(self):
+        size = min(self._remaining_bytes, 0xffff)
+        if self.flags.streaming:
+            # Also read through the chunk_size.
+            size += 2
+
+        if self.flags.compression:
+            buf = _read_from_decompressor(self._decompressor, self._input, size)
         else:
-            decompressed_len = min(size, self._remaining_bytes)
-        if self.flags.no_compression():
-            buf = self._input.read(decompressed_len)
-            if len(buf) < decompressed_len: raise MalformedInputError("unexpected EOF")
-        elif self.flags.deflate():
-            buf = _read_from_decompressor(self._decompressor, self._input, decompressed_len)
-        else: assert False
+            buf = self._input.read(size)
+            if len(buf) < size: raise MalformedInputError("unexpected EOF")
+
+        if self.flags.streaming:
+            # Drop the chunk_size.
+            buf = buf[2:]
+
         self._remaining_bytes -= len(buf)
+        if self._remaining_bytes == 0:
+            self.done = True
+
         return buf
 
 # MAINTAINER NOTE: I originally tried using a base class for these common methods,
 # but then pytlint got confused about undefined symbols. OOP considered harmful.
-def _read_item(reader, name_size, item_metadata_size, file_size):
-    buf = reader._read(name_size + item_metadata_size)
-    name, item_metadata = buf[:name_size], buf[name_size:]
-
+def _validate_archive_path(name):
     try:
         name_str = name.decode("utf8")
         if validate_archive_path(name_str) != name:
             raise InvalidArchivePathError
     except (UnicodeDecodeError, InvalidArchivePathError):
         raise MalformedInputError("invalid name found in archive: " + repr(name)) from None
+    return name_str
 
-    return Item(name_str, file_size, item_metadata)
+def _validate_archive_footer(archive_footer):
+    """ validates footer_checksum and footer_signature and returns index_region_location """
+    if archive_footer[-3:] != footer_signature: raise MalformedInputError("archive footer signature not found. archive truncated?")
+    documented_footer_checksum = archive_footer[-4]
+    index_region_location_buf = archive_footer[-12:-4]
+    calculated_footer_checksum = 0xFF & sum(index_region_location_buf)
+    if documented_footer_checksum != calculated_footer_checksum:
+        raise MalformedInputError("footer checksum failed. calculated: {}, documented: {}".format(calculated_footer_checksum, documented_footer_checksum))
+    (index_region_location,) = struct.unpack("<Q", index_region_location_buf)
+    return index_region_location
 
 def _read_from_decompressor(decompressor, file, decompressed_len, *, compressed_read_limit=None, allow_eof=False, unused_data_from_previous_stream=None):
     result = b''
@@ -417,10 +526,6 @@ def _read_from_decompressor(decompressor, file, decompressed_len, *, compressed_
     if len(result) == decompressed_len: return result
     if allow_eof and len(result) == 0: return b''
     raise MalformedInputError("unexpected end of stream")
-
-
-class MalformedInputError(Exception): pass
-class IncompatibleInputError(Exception): pass
 
 def Decompressor():
     return zlib.decompressobj(wbits=-zlib.MAX_WBITS)
