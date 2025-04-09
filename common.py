@@ -10,6 +10,8 @@ FILE_TYPE_POSIX_EXECUTABLE = 1
 FILE_TYPE_DIRECTORY = 2
 FILE_TYPE_SYMLINK = 3
 
+empty_flags = 0xF0
+
 # Feature flags
 class UnsupportedFeatureError(Exception): pass
 class FeatureFlags:

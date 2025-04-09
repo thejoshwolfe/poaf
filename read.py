@@ -57,6 +57,11 @@ class StreamReader:
             if archive_header[0:3] != archive_signature: raise MalformedInputError("not an archive")
             self.flags = FeatureFlags(archive_header[3])
 
+            if self.flags.value() == empty_flags:
+                # This is going to be easy.
+                self._input.close()
+                return
+
             if not self.flags.streaming: raise IncompatibleInputError("archive does not support streaming")
             if self.flags.compression:
                 self._decompressor = Decompressor()
@@ -79,6 +84,7 @@ class StreamReader:
         return self
 
     def close(self):
+        if self.flags.value() == empty_flags: return
         if self.flags.compression:
             self._decompressor = None
         try:
@@ -88,6 +94,7 @@ class StreamReader:
             self._input.close()
 
     def __next__(self):
+        if self.flags.value() == empty_flags: raise StopIteration
         if self._current_item != None: raise ValueError("call read_from_item until done")
 
         expect_sentinel = self.flags.streaming and self.flags.index and not self.flags.compression
@@ -284,6 +291,10 @@ class IndexReader:
             self._stream_start = data_region_start
             self._skip_bytes_since_stream_start = 0
 
+            if self.flags.value() == empty_flags:
+                # This is going to be easy.
+                self._input.close()
+                return
             if not self.flags.index: raise IncompatibleInputError("archive does not support random access")
 
             # ArchiveFooter
@@ -335,11 +346,13 @@ class IndexReader:
         return buf
 
     def close(self):
+        if self.flags.value() == empty_flags: return
         self._input.close()
         if self.flags.compression:
             self._decompressor = None
 
     def __next__(self):
+        if self.flags.value() == empty_flags: raise StopIteration
         # IndexItem
         buf = self._read((4 if self.flags.crc32 else 0) + 18, allow_eof=True)
         if len(buf) == 0:
