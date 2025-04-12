@@ -131,6 +131,9 @@ class StreamReader:
             item._predicted_index_item.jump_location = self._input.tell()
 
         self._current_item = item
+        if item.file_type in (FILE_TYPE_DIRECTORY, FILE_TYPE_SYMLINK):
+            # Read the contents immediately. It's always bounded size.
+            self.read_from_item(item)
         return item
 
     def read_from_item(self, item, size_limit=0xFFFFFFFFFFFFFFFF):
@@ -156,6 +159,20 @@ class StreamReader:
         (chunk_size,) = struct.unpack("<H", chunk_size_buf)
         buf = self._read(chunk_size)
         item.done = len(buf) < 0xFFFF
+
+        # Special handling for directory and symlink contents.
+        if item.file_type == FILE_TYPE_DIRECTORY:
+            if chunk_size > 0: raise MalformedInputError("directory items must have 0-length contents")
+        elif item.file_type == FILE_TYPE_SYMLINK:
+            if chunk_size > 4095: raise MalformedInputError("symlink length exceeds 4095")
+            try:
+                item.symlink_target = buf.decode("utf8")
+            except UnicodeDecodeError:
+                raise MalformedInputError("symlink target invalid utf8")
+            try:
+                validate_archive_path(item.symlink_target, symlink=True)
+            except InvalidArchivePathError:
+                raise MalformedInputError("illegal symlink target")
 
         # Track file size
         item._predicted_index_item.file_size += len(buf)

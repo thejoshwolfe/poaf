@@ -48,28 +48,46 @@ class FeatureFlags:
 
 # Paths
 class InvalidArchivePathError(Exception): pass
-def validate_archive_path(archive_path):
+def validate_archive_path(archive_path, file_name_of_symlink=None):
     """
-    canonicalizes native path separator, then checks validity according to spec, then returns bytes representation.
+    Pass in a str, returns a bytes.
+    Give file_name_of_symlink as a str to put this function in symlink validation mode.
+    Canonicalizes native path separator (except for symlinks).
+    Then checks validity according to spec.
     """
 
-    # Canonicalize slash direction.
-    archive_path = archive_path.replace(os.path.sep, "/")
+    if file_name_of_symlink == None:
+        # Canonicalize slash direction.
+        archive_path = archive_path.replace(os.path.sep, "/")
 
     # Check length and UTF-8 validity.
     if len(archive_path) == 0: raise InvalidArchivePathError("Path must not be empty")
     name = archive_path.encode("utf8")
     if len(name) > 16383: raise InvalidArchivePathError("Path must not be longer than 16383 bytes", archive_path)
-    segments = name.split(b"/")
-    # Catch path traversal.
-    if len(segments[0]) == 0: raise InvalidArchivePathError("Path must not be absolute", archive_path)
-    if b".." in segments: raise InvalidArchivePathError("Path must not contain '..' segments", archive_path)
-    # Forbid non-normalized paths.
-    if b"" in segments:   raise InvalidArchivePathError("Path must not contain empty segments", archive_path)
-    if b"." in segments:  raise InvalidArchivePathError("Path must not contain '.' segments", archive_path)
     # Windows-friendly characters (also no absolute Windows paths, because of ':'.).
     match = re.search(rb'[\x00-\x1f<>:"|?*]', name)
     if match != None: raise InvalidArchivePathError("Path must not contain special characters [\\x00-\\x1f<>:\"|?*]", archive_path)
+
+    # Catch path traversal and non-normalized paths.
+    segments = name.split(b"/")
+    if segments[0] == b"": raise InvalidArchivePathError("Path must not be absolute", archive_path)
+    if b"" in segments:    raise InvalidArchivePathError("Path must not contain empty segments", archive_path)
+    if file_name_of_symlink != None:
+        # Limited navigation allowed symlink targets.
+        if name != b"." and b"." in segments: raise InvalidArchivePathError("Path must not contain '.' segments", archive_path)
+        depth = len(file_name_of_symlink.split("/")) - 1
+        while depth > 0 and len(segments) > 0:
+            if segments[0] == b"..":
+                # Up is ok here.
+                del segments[0]
+                depth -= 1
+            else:
+                break
+        if b".." in segments: raise InvalidArchivePathError("Symlink target may only have '..' segments at the start up to the depth of the item in the archive", archive_path)
+    else:
+        # No navigation allowed in file_name fields.
+        if b".." in segments: raise InvalidArchivePathError("Path must not contain '..' segments", archive_path)
+        if b"." in segments:  raise InvalidArchivePathError("Path must not contain '.' segments", archive_path)
 
     return name
 

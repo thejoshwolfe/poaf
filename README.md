@@ -16,7 +16,7 @@ Features:
 * CRC32 checksums (optional)
 * UTF-8 for all strings
 * Implicit ancestor directories and explicit empty directories
-* Symlinks and posix executable bit
+* Symlinks and POSIX executable bit
 * Some limitations on file names to accommodate Windows
 * Open specification and permissive licensing
 
@@ -115,7 +115,7 @@ A byte is 8 bits.
 
 A file type is an integer with one of the following values. See also the dedicated documentation on `file_type`:
 * `0` - normal file
-* `1` - posix executable file
+* `1` - POSIX executable file
 * `2` - empty directory
 * `3` - symlink
 
@@ -496,28 +496,28 @@ For each substring `ancestor` from the start of `file_name` to just before each 
 An item's file type is encoded as a 2-bit integer:
 
 * `0` - normal file
-* `1` - posix executable file
+* `1` - POSIX executable file
 * `2` - empty directory
 * `3` - symlink
 
 A reader may reject archives with unsupported file types.
 
-The distinction between type `0` and `1` is that the latter should have its `chmod +x` bit set on posix systems.
+The distinction between type `0` and `1` is that the latter should have its `chmod +x` bit set on POSIX systems.
 Note that on Windows, executeability is generally determined by file extension, so an `.exe` file may have file type `0`.
-A reader extracting an archive on a posix system with Windows executables should be prepared to handle this situation.
 
-A file of type `2` is only necessary to include in an archive if no other item in the archive implies the need for the directory to exist as its ancestor.
-See `file_name` above.
-It is not possible to specify any metadata for a directory.
+A file of type `2` is only necessary to include in an archive if no other item in the archive implies the need for the directory to exist as its ancestor; see `file_name` above.
+It is not possible to specify any metadata for a directory, such as permission bits, timestamps, or owner.
 If `file_type` is `2`, then the item's contents must be 0-length.
 
-A file of type `3` is a posix symlink.
+A file of type `3` is a POSIX symlink.
 The item's contents is the target.
+The maximum contents length for a symlink in this archive format is `4095`;
+note however that a target file system may impose a different limit.
 This specification places restrictions on symlink targets, similar to restrictions on `file_name`.
 
 All the same restrictions on `file_name` apply to symlink targets, except that `.` and `..` segments are sometimes permitted:
 If the entire link target is `.`, it is permitted, otherwise `.` segments are not allowed.
-Let `depth` be the number of `/` bytes in the item's `file_name`.
+Let `depth` be the number of `/` bytes in the item's `file_name` (not in the link target).
 Let `segments` be the result of splitting the link target on `/`.
 A segment may be `..` only if every prior segment, if any, is also `..`, and the total number of `..` segments does not exceed `depth`.
 This is to prevent path traversal vulnerabilities.
