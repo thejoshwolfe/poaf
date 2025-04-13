@@ -103,6 +103,8 @@ class Writer:
             input_path, archive_path = input_path.rsplit("->", 1)
         except ValueError:
             archive_path = os.path.relpath(input_path, self.root)
+            # Canonicalize slash direction.
+            archive_path = archive_path.replace(os.path.sep, "/")
         name = validate_archive_path(archive_path)
 
         # Compute metadata.

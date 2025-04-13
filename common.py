@@ -50,15 +50,10 @@ class FeatureFlags:
 class InvalidArchivePathError(Exception): pass
 def validate_archive_path(archive_path, file_name_of_symlink=None):
     """
+    Checks validity according to spec.
     Pass in a str, returns a bytes.
     Give file_name_of_symlink as a str to put this function in symlink validation mode.
-    Canonicalizes native path separator (except for symlinks).
-    Then checks validity according to spec.
     """
-
-    if file_name_of_symlink == None:
-        # Canonicalize slash direction.
-        archive_path = archive_path.replace(os.path.sep, "/")
 
     # Check length and UTF-8 validity.
     if len(archive_path) == 0: raise InvalidArchivePathError("Path must not be empty")

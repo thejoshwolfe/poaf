@@ -46,27 +46,24 @@ def main():
             subprocess.run(cmd, check=True)
 
             # List index
-            if "--no-index" not in options:
-                cmd = ["./read.py", archive_path]
-                #subprocess.run(cmd, check=True)
-                lines = subprocess.run(cmd, stdout=subprocess.PIPE, check=True).stdout.decode("utf8").splitlines()
-                assert lines == file_names
+            cmd = ["./read.py", archive_path]
+            #subprocess.run(cmd, check=True)
+            lines = subprocess.run(cmd, stdout=subprocess.PIPE, check=True).stdout.decode("utf8").splitlines()
+            assert lines == file_names
 
             # Extract streaming
-            if "--no-streaming" not in options:
-                with tempfile.TemporaryDirectory() as d:
-                    cmd = ["./read.py", archive_path, "--extract", d]
-                    subprocess.run(cmd, check=True)
-                    assert_dir(d, file_name_args, file_names)
+            with tempfile.TemporaryDirectory() as d:
+                cmd = ["./read.py", archive_path, "--extract", d]
+                subprocess.run(cmd, check=True)
+                assert_dir(d, file_name_args, file_names)
 
             # Extract random access
-            if "--no-index" not in options:
-                with tempfile.TemporaryDirectory() as d:
-                    # Extract each item in individual calls.
-                    for name in reversed(file_names):
-                        cmd = ["./read.py", archive_path, "--extract", d, name]
-                        subprocess.run(cmd, check=True)
-                    assert_dir(d, file_name_args, file_names)
+            with tempfile.TemporaryDirectory() as d:
+                # Extract each item in individual calls.
+                for name in reversed(file_names):
+                    cmd = ["./read.py", archive_path, "--extract", d, name]
+                    subprocess.run(cmd, check=True)
+                assert_dir(d, file_name_args, file_names)
 
 def assert_dir(d, file_name_args, file_names):
     found_files = os.listdir(d)

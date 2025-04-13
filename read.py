@@ -14,79 +14,135 @@ def main():
     parser.add_argument("archive")
     parser.add_argument("-x", "--extract", metavar="DIR", help=
         "Extract entire archive to the given directory.")
+    parser.add_argument("--no-streaming-fallback", help=
+        "When attempting to list the index or extract an explicit selection of items, "
+        "fail if the archive does not include an index. "
+        "The default behavior is to fallback to streaming the whole archive.")
     parser.add_argument("items", nargs="*", help=
         "If specified, only extracts the given items.")
     args = parser.parse_args()
 
-    if args.extract and not args.items:
-        # Streaming extract everything
-        with StreamReader(args.archive) as reader:
-            for item in reader:
+    want_every_item = not args.items
+    want_contents = bool(args.extract)
+    prefer_index = not want_every_item or not want_contents
+
+    specific_items = set(args.items)
+    found_items = set()
+    with open_archive(args.archive, prefer_index, args.no_streaming_fallback) as reader:
+        for item in reader:
+            if len(specific_items) == 0:
+                # Handle every item.
+                pass
+            elif item.file_name_str in specific_items:
+                # Handle this item.
+                found_items.add(item.file_name_str)
+            else:
+                # Skip this item.
+                reader.skip_item(item)
+                continue
+
+            if args.extract:
+                # Extract.
+                reader.open_item(item)
                 extract_item(args.extract, reader, item)
-    else:
-        specific_items = set(args.items)
-        found_items = set()
-        with IndexReader(args.archive) as reader:
-            for item in reader:
-                if len(specific_items) == 0:
-                    # Just list
-                    print(item.file_name_str)
-                elif item.file_name_str in specific_items:
-                    # Extract this item.
-                    found_items.add(item.file_name_str)
-                    reader.open_item(item)
-                    extract_item(args.extract, reader, item)
-        missing_items = specific_items - found_items
-        if len(missing_items) > 0:
-            sys.exit("\n".join([
-                "ERROR: item not found in archive: " + name
-                for name in sorted(missing_items)
-            ]))
+            else:
+                # Just list.
+                reader.skip_item(item)
+                print(item.file_name_str)
+
+    missing_items = specific_items - found_items
+    if len(missing_items) > 0:
+        sys.exit("\n".join([
+            "ERROR: item not found in archive: " + name
+            for name in sorted(missing_items)
+        ]))
 
 def extract_item(dir, reader, item):
-    with open(os.path.join(dir, item.file_name_str), "wb") as output:
-        while not item.done:
-            output.write(reader.read_from_item(item))
+    # Implicit ancestors directories
+    i = item.file_name_str.find("/")
+    while i != -1:
+        ancestor = item.file_name_str[:i]
+        i = item.file_name_str.find("/", i)
+        ancestor_dir = os.path.join(dir, ancestor.replace("/", os.path.sep))
+        if not os.path.isdir(ancestor_dir):
+            os.mkdir(ancestor_dir) # an error here means this is already a file or symlink.
+
+    # File contents
+    file_name_path = os.path.join(dir, item.file_name_str.replace("/", os.path.sep))
+    if item.file_type == FILE_TYPE_DIRECTORY:
+        if not os.path.isdir(file_name_path):
+            os.mkdir(file_name_path) # an error here means this is already a file or symlink.
+    elif item.file_type == FILE_TYPE_SYMLINK:
+        # Validation has already been done on the symlink target via validate_archive_path().
+        os.symlink(item.symlink_target, file_name_path)
+    else:
+        # Pump contents of regular file.
+        with open(file_name_path, "wb") as output:
+            while not item.done:
+                output.write(reader.read_from_item(item))
+        if item.file_type == FILE_TYPE_POSIX_EXECUTABLE:
+            # chmod posix executable bits.
+            mode = os.stat(file_name_path).st_mode
+            # Respect whatever umask limited the permissions on create.
+            # Only eneable x where r is already enabled.
+            mode |= (mode & 0o444) >> 2
+            os.chmod(file_name_path, mode)
+
+def open_archive(archive_path, prefer_index, require_index):
+    file = open(archive_path, "rb")
+    try:
+        # ArchiveHeader
+        archive_header = file.read(4)
+        if archive_header[0:3] != archive_signature: raise MalformedInputError("not an archive")
+        flags = FeatureFlags(archive_header[3])
+
+        if flags.value() == empty_flags:
+            file.close()
+            return EmptyReader()
+
+        if prefer_index and require_index and not flags.index:
+            raise IncompatibleInputError("archive does not have an index")
+
+        if (prefer_index and flags.index) or not flags.streaming:
+            return IndexReader(file, flags)
+        else:
+            return StreamingReader(file, flags)
+    except:
+        file.close()
+        raise
 
 default_chunk_size = 0x400
 
-class StreamReader:
-    def __init__(self, archive_path, validate_index=True):
-        self._input = open(archive_path, "rb")
-        try:
-            # ArchiveHeader
-            archive_header = self._input.read(4)
-            if archive_header[0:3] != archive_signature: raise MalformedInputError("not an archive")
-            self.flags = FeatureFlags(archive_header[3])
+class EmptyReader:
+    def __enter__(self): return self
+    def __exit__(self, *args): self.close()
+    def __iter__(self): return self
+    def __next__(self): return self.next()
 
-            if self.flags.value() == empty_flags:
-                # This is going to be easy.
-                self._input.close()
-                return
+    # Overridable
+    def close(self): pass
+    def next(self): raise StopIteration
+    def open_item(self, item): pass
+    def skip_item(self, item): pass
 
-            if not self.flags.streaming: raise IncompatibleInputError("archive does not support streaming")
-            if self.flags.compression:
-                self._decompressor = Decompressor()
+class StreamingReader(EmptyReader):
+    def __init__(self, file, flags, validate_index=True):
+        assert flags.streaming
+        self._input = file
+        self.flags = flags
 
-            self.validating_index = validate_index and self.flags.index
-            if self.validating_index:
-                self._index_tmpfile = tempfile.TemporaryFile()
-                if self.flags.crc32:
-                    self._index_crc32 = 0
-        except:
-            self._input.close()
-            raise
+        if self.flags.compression:
+            self._decompressor = Decompressor()
+
+        self.validating_index = validate_index and self.flags.index
+        if self.validating_index:
+            self._index_tmpfile = tempfile.TemporaryFile()
+            if self.flags.crc32:
+                self._index_crc32 = 0
+
         self._current_item = None
 
-    def __enter__(self):
-        return self
-    def __exit__(self, *args):
-        self.close()
-    def __iter__(self):
-        return self
-
     def close(self):
-        if self.flags.value() == empty_flags: return
         if self.flags.compression:
             self._decompressor = None
         try:
@@ -95,9 +151,8 @@ class StreamReader:
         finally:
             self._input.close()
 
-    def __next__(self):
-        if self.flags.value() == empty_flags: raise StopIteration
-        if self._current_item != None: raise ValueError("call read_from_item until done")
+    def next(self):
+        if self._current_item != None: raise ValueError("use skip_item() or call read_from_item() until done")
 
         expect_sentinel = self.flags.streaming and self.flags.index and not self.flags.compression
 
@@ -216,6 +271,10 @@ class StreamReader:
                 ))
         return buf
 
+    def skip_item(self, item):
+        while not item.done:
+            self.read_from_item(item)
+
     def _done_reading_data_region(self):
         if not self.flags.index:
             # Ensure we hit EOF.
@@ -297,77 +356,47 @@ class StreamReader:
             if len(buf) < n: raise MalformedInputError("unexpected EOF")
             return buf
 
-class IndexReader:
-    def __init__(self, archive_path):
-        self._input = open(archive_path, "rb")
-        try:
-            # ArchiveHeader
-            archive_header = self._input.read(4)
-            if archive_header[0:3] != archive_signature: raise MalformedInputError("not an archive")
-            self.flags = FeatureFlags(archive_header[3])
-            data_region_start = 4
-            self._stream_start = data_region_start
-            self._skip_bytes_since_stream_start = 0
+class IndexReader(EmptyReader):
+    def __init__(self, file, flags):
+        assert flags.index
+        self._input = file
+        self.flags = flags
 
-            if self.flags.value() == empty_flags:
-                # This is going to be easy.
-                self._input.close()
-                return
-            if not self.flags.index: raise IncompatibleInputError("archive does not support random access")
+        data_region_start = 4
+        self._stream_start = data_region_start
+        self._skip_bytes_since_stream_start = 0
 
-            # ArchiveFooter
-            self._file_size = self._input.seek(0, os.SEEK_END)
-            archive_footer_size = (4 if self.flags.crc32 else 0) + 12
-            self.archive_footer_start = self._file_size - archive_footer_size
-            if not (4 <= self.archive_footer_start): raise MalformedInputError("unexpected EOF")
-            self._input.seek(self.archive_footer_start)
-            # archive_footer
-            archive_footer = self._input.read(archive_footer_size)
+        # ArchiveFooter
+        self._file_size = self._input.seek(0, os.SEEK_END)
+        archive_footer_size = (4 if self.flags.crc32 else 0) + 12
+        self.archive_footer_start = self._file_size - archive_footer_size
+        if not (4 <= self.archive_footer_start): raise MalformedInputError("unexpected EOF")
+        self._input.seek(self.archive_footer_start)
+        # archive_footer
+        archive_footer = self._input.read(archive_footer_size)
 
-            self.index_region_location = _validate_archive_footer(archive_footer)
+        self.index_region_location = _validate_archive_footer(archive_footer)
 
-            if self.flags.compression:
-                if not (data_region_start <= self.index_region_location < self.archive_footer_start): raise MalformedInputError("index_region_location out of bounds")
-            else:
-                if not (data_region_start <= self.index_region_location <= self.archive_footer_start): raise MalformedInputError("index_region_location out of bounds")
-
-            if self.flags.crc32:
-                (self.index_crc32,) = struct.unpack("<L", archive_footer[0:4])
-                self._calculated_index_crc32 = 0
-
-            # Start the Index Region.
-            self._index_file = FileSlice(self._input, self.index_region_location, self.archive_footer_start)
-            if self.flags.compression:
-                self._index_decompressor = Decompressor()
-
-        except:
-            self._input.close()
-            raise
-
-    def __enter__(self):
-        return self
-    def __exit__(self, *args):
-        self.close()
-    def __iter__(self):
-        return self
-    def _read_index(self, n, *, allow_eof=False):
         if self.flags.compression:
-            # Pump more from the decompressor.
-            return _read_from_decompressor(self._index_decompressor, self._index_file, n, allow_eof=allow_eof)
-        # Read directly from the Index Region.
-        buf = self._index_file.read(n)
-        if len(buf) == 0 and allow_eof: return b""
-        if len(buf) < n: raise MalformedInputError("Index Region truncated mid-item")
-        return buf
+            if not (data_region_start <= self.index_region_location < self.archive_footer_start): raise MalformedInputError("index_region_location out of bounds")
+        else:
+            if not (data_region_start <= self.index_region_location <= self.archive_footer_start): raise MalformedInputError("index_region_location out of bounds")
+
+        if self.flags.crc32:
+            (self.index_crc32,) = struct.unpack("<L", archive_footer[0:4])
+            self._calculated_index_crc32 = 0
+
+        # Start the Index Region.
+        self._index_file = FileSlice(self._input, self.index_region_location, self.archive_footer_start)
+        if self.flags.compression:
+            self._index_decompressor = Decompressor()
 
     def close(self):
-        if self.flags.value() == empty_flags: return
         self._input.close()
         if self.flags.compression:
             self._index_decompressor = None
 
-    def __next__(self):
-        if self.flags.value() == empty_flags: raise StopIteration
+    def next(self):
         # IndexItem
         buf = self._read_index((4 if self.flags.crc32 else 0) + 18, allow_eof=True)
         if len(buf) == 0:
@@ -444,6 +473,16 @@ class IndexReader:
         item._decompressor = decompressor
         item._remaining_bytes = item.file_size
 
+    def _read_index(self, n, *, allow_eof=False):
+        if self.flags.compression:
+            # Pump more from the decompressor.
+            return _read_from_decompressor(self._index_decompressor, self._index_file, n, allow_eof=allow_eof)
+        # Read directly from the Index Region.
+        buf = self._index_file.read(n)
+        if len(buf) == 0 and allow_eof: return b""
+        if len(buf) < n: raise MalformedInputError("Index Region truncated mid-item")
+        return buf
+
     def read_from_item(self, item):
         assert item._contents_file != None, "call open_item() first"
         size = min(item._remaining_bytes, 0xffff)
@@ -492,13 +531,10 @@ class IndexItem:
         self._remaining_bytes = None
 
 
-# MAINTAINER NOTE: I originally tried using a base class for these common methods,
-# but then pytlint got confused about undefined symbols. OOP considered harmful.
 def _validate_archive_path(name):
     try:
         name_str = name.decode("utf8")
-        if validate_archive_path(name_str) != name:
-            raise InvalidArchivePathError
+        validate_archive_path(name_str)
     except (UnicodeDecodeError, InvalidArchivePathError):
         raise MalformedInputError("invalid name found in archive: " + repr(name)) from None
     return name_str
