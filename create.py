@@ -42,6 +42,9 @@ def main():
         index=      not args.no_index,
     )
 
+    if flags.value() == empty_flags and args.files:
+        parser.error("cannot give files with --no-index --no-streaming")
+
     with Writer(
         flags=flags,
         root=args.root,

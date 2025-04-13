@@ -22,9 +22,7 @@ def main():
         # Streaming extract everything
         with StreamReader(args.archive) as reader:
             for item in reader:
-                with open(os.path.join(args.extract, item.file_name_str), "wb") as f:
-                    while not item.done:
-                        f.write(reader.read_from_item(item))
+                extract_item(args.extract, reader, item)
     else:
         specific_items = set(args.items)
         found_items = set()
@@ -36,16 +34,19 @@ def main():
                 elif item.file_name_str in specific_items:
                     # Extract this item.
                     found_items.add(item.file_name_str)
-                    with reader.open_item_reader(item) as item_reader:
-                        with open(os.path.join(args.extract, item.file_name_str), "wb") as output:
-                            while not item_reader.done:
-                                output.write(item_reader.read_chunk())
+                    reader.open_item(item)
+                    extract_item(args.extract, reader, item)
         missing_items = specific_items - found_items
         if len(missing_items) > 0:
             sys.exit("\n".join([
                 "ERROR: item not found in archive: " + name
                 for name in sorted(missing_items)
             ]))
+
+def extract_item(dir, reader, item):
+    with open(os.path.join(dir, item.file_name_str), "wb") as output:
+        while not item.done:
+            output.write(reader.read_from_item(item))
 
 default_chunk_size = 0x400
 
@@ -424,19 +425,50 @@ class IndexReader:
 
         return item
 
-    def open_item_reader(self, item):
+    def open_item(self, item):
+        assert item._contents_file == None, "already open"
         contents_file = FileSlice(self._input, item._stream_start, self.index_region_location)
         if self.flags.compression:
             decompressor = Decompressor()
         else:
-            decompressor = None # Appease pylint
+            decompressor = None
         skip_bytes = item._skip_bytes_until_contents
         while skip_bytes > 0:
             assert self.flags.compression, "skip_bytes is always 0 for no-compression archives"
             size = min(skip_bytes, default_chunk_size)
             skipped_buf = _read_from_decompressor(decompressor, contents_file, size)
             skip_bytes -= len(skipped_buf)
-        return ItemReader(self.flags, decompressor, contents_file, item.file_size)
+        assert skip_bytes == 0
+        item.done = False
+        item._contents_file = contents_file
+        item._decompressor = decompressor
+        item._remaining_bytes = item.file_size
+
+    def read_from_item(self, item):
+        assert item._contents_file != None, "call open_item() first"
+        size = min(item._remaining_bytes, 0xffff)
+        if self.flags.streaming:
+            # Also read through the chunk_size.
+            size += 2
+
+        if self.flags.compression:
+            buf = _read_from_decompressor(item._decompressor, item._contents_file, size)
+        else:
+            buf = item._contents_file.read(size)
+            if len(buf) < size: raise MalformedInputError("unexpected EOF")
+
+        if self.flags.streaming:
+            # Drop the chunk_size.
+            buf = buf[2:]
+
+        item._remaining_bytes -= len(buf)
+        if item._remaining_bytes == 0:
+            item.done = True
+            # Reset in case you want to read it again.
+            item._contents_file = None
+            item._decompressor = None
+
+        return buf
 
 class StreamingItem:
     def __init__(self, file_type, file_name_str, streaming_crc32_so_far):
@@ -453,42 +485,12 @@ class IndexItem:
         self.file_type = file_type
         self.file_name_str = file_name_str
         self.contents_crc32 = contents_crc32
+        # Used after opening the item:
+        self.done = None
+        self._contents_file = None
+        self._decompressor = None
+        self._remaining_bytes = None
 
-class ItemReader:
-    def __init__(self, flags, decompressor, file, file_size):
-        self.done = False
-        self.flags = flags
-        if self.flags.compression:
-            self._decompressor = decompressor
-        self._input = file
-        self._remaining_bytes = file_size
-    def __enter__(self):
-        return self
-    def __exit__(self, *args):
-        self._input = None
-        if self.flags.compression:
-            self._decompressor = None
-    def read_chunk(self):
-        size = min(self._remaining_bytes, 0xffff)
-        if self.flags.streaming:
-            # Also read through the chunk_size.
-            size += 2
-
-        if self.flags.compression:
-            buf = _read_from_decompressor(self._decompressor, self._input, size)
-        else:
-            buf = self._input.read(size)
-            if len(buf) < size: raise MalformedInputError("unexpected EOF")
-
-        if self.flags.streaming:
-            # Drop the chunk_size.
-            buf = buf[2:]
-
-        self._remaining_bytes -= len(buf)
-        if self._remaining_bytes == 0:
-            self.done = True
-
-        return buf
 
 # MAINTAINER NOTE: I originally tried using a base class for these common methods,
 # but then pytlint got confused about undefined symbols. OOP considered harmful.
