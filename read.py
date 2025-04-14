@@ -89,6 +89,7 @@ def extract_item(dir, reader, item):
             os.chmod(file_name_path, mode)
 
 def open_archive(archive_path, prefer_index, require_index):
+    if not prefer_index: require_index = False
     file = open(archive_path, "rb")
     try:
         # ArchiveHeader
@@ -97,13 +98,19 @@ def open_archive(archive_path, prefer_index, require_index):
         flags = FeatureFlags(archive_header[3])
 
         if flags.value() == empty_flags:
+            # This is the 4-byte empty archive.
+            if len(file.read(1)) != 0: raise MalformedInputError("expected EOF")
             file.close()
             return EmptyReader()
 
-        if prefer_index and require_index and not flags.index:
-            raise IncompatibleInputError("archive does not have an index")
+        seekable = file.seekable()
+        if require_index:
+            if not flags.index:
+                raise IncompatibleInputError("archive does not have the index enabled")
+            if not seekable:
+                raise IncompatibleInputError("archive file does not support seeking")
 
-        if (prefer_index and flags.index) or not flags.streaming:
+        if (prefer_index and flags.index and seekable) or not flags.streaming:
             return IndexReader(file, flags)
         else:
             return StreamingReader(file, flags)
@@ -111,7 +118,7 @@ def open_archive(archive_path, prefer_index, require_index):
         file.close()
         raise
 
-default_chunk_size = 0x400
+default_chunk_size = 0x4000
 
 class EmptyReader:
     def __enter__(self): return self
@@ -316,7 +323,9 @@ class StreamingReader(EmptyReader):
             index_crc32 = zlib.crc32(calculated_buf, index_crc32)
 
         if self.flags.compression:
-            if not (self._decompressor.eof and len(self._decompressor.unconsumed_tail) == 0): raise MalformedInputError("Index Region compression stream too long")
+            # Make sure we're at the end of the compression stream.
+            extra = self._read(1, unused_data_from_previous_stream=unused_data, allow_eof=True)
+            if len(extra) != 0: raise MalformedInputError("Index Region compression stream too long")
             unused_data = self._decompressor.unused_data
         else:
             unused_data = b""
@@ -578,7 +587,7 @@ def _read_from_decompressor(decompressor, file, decompressed_len, *, allow_eof=F
         #print("input: " + repr(chunk), file=sys.stderr)
         result += decompressor.decompress(chunk, remaining)
 
-    #print("output({},{}): {}".format(decompressed_len, repr(result)), file=sys.stderr)
+    #print("output({}): {}".format(decompressed_len, repr(result)), file=sys.stderr)
     if len(result) == decompressed_len: return result
     if allow_eof and decompressor.eof and len(result) == 0: return b''
     raise MalformedInputError("unexpected end of stream")
