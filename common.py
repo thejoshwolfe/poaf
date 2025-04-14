@@ -58,7 +58,8 @@ def validate_archive_path(archive_path, file_name_of_symlink=None):
     # Check length and UTF-8 validity.
     if len(archive_path) == 0: raise InvalidArchivePathError("Path must not be empty")
     name = archive_path.encode("utf8")
-    if len(name) > 16383: raise InvalidArchivePathError("Path must not be longer than 16383 bytes", archive_path)
+    length_limit = 4095 if file_name_of_symlink != None else 16383
+    if len(name) > length_limit: raise InvalidArchivePathError("Path must not be longer than {} bytes".format(length_limit), archive_path)
     # Windows-friendly characters (also no absolute Windows paths, because of ':'.).
     match = re.search(rb'[\x00-\x1f<>:"|?*]', name)
     if match != None: raise InvalidArchivePathError("Path must not contain special characters [\\x00-\\x1f<>:\"|?*]", archive_path)

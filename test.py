@@ -16,16 +16,19 @@ def main():
     parser = argparse.ArgumentParser()
     parser.parse_args()
 
+    test_permutations()
+
+def test_permutations():
     file_name_args = [
-        "empty_test_file.txt->empty_test_file_1.txt",
+        "/dev/null->f:empty_test_file_1.txt",
         "create.py",
         "read.py",
-        "empty_test_file.txt->empty_test_file_2.txt",
-        "empty_test_file.txt->empty_test_file_3.txt",
+        "/dev/null->f:empty_test_file_2.txt",
+        "/dev/null->f:empty_test_file_3.txt",
         "common.py",
     ]
     file_names = [
-        arg.rsplit("->")[-1] for arg in file_name_args
+        arg.rsplit("->")[-1].split(":")[-1] for arg in file_name_args
     ]
 
     for options in (tuple(itertools.chain(*v)) for v in itertools.product(

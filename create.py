@@ -105,21 +105,31 @@ class Writer:
             archive_path = os.path.relpath(input_path, self.root)
             # Canonicalize slash direction.
             archive_path = archive_path.replace(os.path.sep, "/")
+        try:
+            type_code, archive_path = archive_path.split(":", 1)
+        except ValueError:
+            type_code = None # Infer
         name = validate_archive_path(archive_path)
 
         # Compute metadata.
-        st = os.stat(input_path, follow_symlinks=False)
-        if stat.S_ISREG(st.st_mode):
-            if st.st_mode & 0o111:
-                file_type = FILE_TYPE_POSIX_EXECUTABLE
+        if type_code == None:
+            st = os.stat(input_path, follow_symlinks=False)
+            if stat.S_ISREG(st.st_mode):
+                if st.st_mode & 0o111:
+                    file_type = FILE_TYPE_POSIX_EXECUTABLE
+                else:
+                    file_type = FILE_TYPE_NORMAL_FILE
+            elif stat.S_ISDIR(st.st_mode):
+                file_type = FILE_TYPE_DIRECTORY
+            elif stat.S_ISLNK(st.st_mode):
+                file_type = FILE_TYPE_SYMLINK
             else:
-                file_type = FILE_TYPE_NORMAL_FILE
-        elif stat.S_ISDIR(st.st_mode):
-            file_type = FILE_TYPE_DIRECTORY
-        elif stat.S_ISLNK(st.st_mode):
-            file_type = FILE_TYPE_SYMLINK
-        else:
-            raise NotImplementedError("obscure file type: " + input_path)
+                raise Exception("obscure file type: " + input_path)
+        elif type_code == "f": file_type = FILE_TYPE_NORMAL_FILE
+        elif type_code == "x": file_type = FILE_TYPE_POSIX_EXECUTABLE
+        elif type_code == "d": file_type = FILE_TYPE_DIRECTORY
+        elif type_code == "l": file_type = FILE_TYPE_SYMLINK
+        else: raise Exception("unrecognized type code: " + repr(type_code))
         type_and_name_size = (file_type << 14) | len(name)
 
         if self.flags.streaming:
@@ -154,27 +164,55 @@ class Writer:
         if self.flags.index:
             if self.flags.crc32:
                 contents_crc32 = 0
-        with open(input_path, "rb") as f:
-            while True:
-                buf = f.read(0xffff)
-                if self.flags.streaming:
-                    # Chunked encoding
-                    out_buf = (
-                        struct.pack("<H", len(buf)) +
-                        buf
-                    )
-                    if self.flags.crc32:
-                        streaming_crc32 = zlib.crc32(out_buf, streaming_crc32)
-                else:
-                    out_buf = buf
-                self._write(out_buf)
+        if file_type in (FILE_TYPE_NORMAL_FILE, FILE_TYPE_POSIX_EXECUTABLE):
+            with open(input_path, "rb") as f:
+                while True:
+                    buf = f.read(0xffff)
+                    if self.flags.streaming:
+                        # Chunked encoding
+                        out_buf = (
+                            struct.pack("<H", len(buf)) +
+                            buf
+                        )
+                        if self.flags.crc32:
+                            streaming_crc32 = zlib.crc32(out_buf, streaming_crc32)
+                    else:
+                        out_buf = buf
+                    self._write(out_buf)
 
-                file_size += len(buf)
-                if self.flags.index:
-                    if self.flags.crc32:
+                    file_size += len(buf)
+                    if self.flags.index and self.flags.crc32:
                         contents_crc32 = zlib.crc32(buf, contents_crc32)
 
-                if len(buf) < 0xffff: break
+                    if len(buf) < 0xffff: break
+        elif file_type == FILE_TYPE_DIRECTORY:
+            if self.flags.streaming:
+                # Chunked encoding
+                out_buf = b"\x00\x00"
+                if self.flags.crc32:
+                    streaming_crc32 = zlib.crc32(out_buf, streaming_crc32)
+            else:
+                # Nothing
+                pass
+            self._write(out_buf)
+        elif file_type == FILE_TYPE_SYMLINK:
+            link_target_str = os.readlink(input_path)
+            buf = validate_archive_path(link_target_str, file_name_of_symlink=archive_path)
+            if self.flags.streaming:
+                # Chunked encoding
+                out_buf = (
+                    struct.pack("<H", len(buf)) +
+                    buf
+                )
+                if self.flags.crc32:
+                    streaming_crc32 = zlib.crc32(out_buf, streaming_crc32)
+            else:
+                out_buf = buf
+            self._write(out_buf)
+            file_size += len(buf)
+            if self.flags.index and self.flags.crc32:
+                contents_crc32 = zlib.crc32(buf, contents_crc32)
+        else: assert False
 
         # StreamingHeader fields after the contents
         if self.flags.streaming and self.flags.crc32:
