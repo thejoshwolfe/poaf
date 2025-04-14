@@ -28,7 +28,7 @@ def main():
 
     specific_items = set(args.items)
     found_items = set()
-    with open_archive(args.archive, prefer_index, args.no_streaming_fallback) as reader:
+    with open_path(args.archive, prefer_index, args.no_streaming_fallback) as reader:
         for item in reader:
             if len(specific_items) == 0:
                 # Handle every item.
@@ -88,35 +88,37 @@ def extract_item(dir, reader, item):
             mode |= (mode & 0o444) >> 2
             os.chmod(file_name_path, mode)
 
-def open_archive(archive_path, prefer_index, require_index):
+def open_path(archive_path, prefer_index=True, require_index=False):
     if not prefer_index: require_index = False
     file = open(archive_path, "rb")
     try:
-        # ArchiveHeader
-        archive_header = file.read(4)
-        if archive_header[0:3] != archive_signature: raise MalformedInputError("not an archive")
-        flags = FeatureFlags(archive_header[3])
-
-        if flags.value() == empty_flags:
-            # This is the 4-byte empty archive.
-            if len(file.read(1)) != 0: raise MalformedInputError("expected EOF")
-            file.close()
-            return EmptyReader()
-
-        seekable = file.seekable()
-        if require_index:
-            if not flags.index:
-                raise IncompatibleInputError("archive does not have the index enabled")
-            if not seekable:
-                raise IncompatibleInputError("archive file does not support seeking")
-
-        if (prefer_index and flags.index and seekable) or not flags.streaming:
-            return IndexReader(file, flags)
-        else:
-            return StreamingReader(file, flags)
+        return reader_for_file(file, prefer_index, require_index)
     except:
         file.close()
         raise
+def reader_for_file(file, prefer_index=True, require_index=False):
+    # ArchiveHeader
+    archive_header = file.read(4)
+    if archive_header[0:3] != archive_signature: raise MalformedInputError("not an archive")
+    flags = FeatureFlags(archive_header[3])
+
+    if flags.value() == empty_flags:
+        # This is the 4-byte empty archive.
+        if len(file.read(1)) != 0: raise MalformedInputError("expected EOF")
+        file.close()
+        return EmptyReader()
+
+    seekable = file.seekable()
+    if require_index:
+        if not flags.index:
+            raise IncompatibleInputError("archive does not have the index enabled")
+        if not seekable:
+            raise IncompatibleInputError("archive file does not support seeking")
+
+    if (prefer_index and flags.index and seekable) or not flags.streaming:
+        return IndexReader(file, flags)
+    else:
+        return StreamingReader(file, flags)
 
 default_chunk_size = 0x4000
 

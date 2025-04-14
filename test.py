@@ -10,13 +10,45 @@ import os
 import subprocess
 import tempfile
 import itertools
+import io
+
+from read import reader_for_file
+from common import PoafException
+from test_data import data as test_data
 
 def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.parse_args()
 
+    test_from_data()
     test_permutations()
+
+def test_from_data():
+    for test in test_data:
+        print(test["description"] + "...", end="", flush=True)
+        run_test(test)
+        print("pass")
+
+def run_test(test):
+    contents = io.BytesIO(bytes.fromhex(test["contents"]["hex"]))
+
+    expect_error = False
+    expected_items = []
+    if test["result"] == "error":
+        expect_error = True
+    elif type(test["result"]) == list:
+        expected_items = test["result"]
+    else: assert False
+
+    try:
+        reader = reader_for_file(contents, prefer_index=False)
+        for expected_item, got_item in zip(expected_items, reader, strict=True):
+            raise NotImplementedError
+    except PoafException as e:
+        if not expect_error: raise
+    else:
+        assert not expect_error
 
 def test_permutations():
     file_name_args = [

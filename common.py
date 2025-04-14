@@ -12,8 +12,14 @@ FILE_TYPE_SYMLINK = 3
 
 empty_flags = 0xF0
 
+class PoafException(Exception): pass
+class UnsupportedFeatureError(PoafException): pass
+class InvalidArchivePathError(PoafException): pass
+class MalformedInputError(PoafException): pass
+class IncompatibleInputError(PoafException): pass
+class ItemContentsTooLongError(PoafException): pass
+
 # Feature flags
-class UnsupportedFeatureError(Exception): pass
 class FeatureFlags:
     def __init__(self, flags):
         if (0xF0 & ~flags) >> 4 != flags & 0x0F: raise MalformedInputError("feature flags corrupted")
@@ -47,7 +53,6 @@ class FeatureFlags:
         )
 
 # Paths
-class InvalidArchivePathError(Exception): pass
 def validate_archive_path(archive_path, file_name_of_symlink=None):
     """
     Checks validity according to spec.
@@ -86,7 +91,3 @@ def validate_archive_path(archive_path, file_name_of_symlink=None):
         if b"." in segments:  raise InvalidArchivePathError("Path must not contain '.' segments", archive_path)
 
     return name
-
-class MalformedInputError(Exception): pass
-class IncompatibleInputError(Exception): pass
-class ItemContentsTooLongError(Exception): pass
