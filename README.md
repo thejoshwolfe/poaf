@@ -9,11 +9,10 @@ Shoutouts to this guy who thought that the ZIP file format was "simple and well-
 This archive format is for you.
 
 Features:
-* Streaming writing
-* Streaming reading (optional)
-* Random-access consolidated metadata and selective item reading (optional)
-* DEFLATE compression (optional)
-* CRC32 checksums (optional)
+* Friendly to streaming writing
+* Inline metadata for streaming reading, or consolidated metadata at the end, or both configurable by the archive creator
+* DEFLATE compression for metadata and contents, optionally split strategically to allow random access
+* Redundancy for error detection (not correction) for every bit of data, mostly CRC32 checksums
 * UTF-8 for all strings
 * Implicit ancestor directories and explicit empty directories
 * Symlinks and POSIX executable bit
@@ -34,38 +33,73 @@ This document is a formal specification for the archive format.
 This project also contains an example implementation in Python,
 but the implementation is informative only; this document is the normative authority.
 
-Here is a non-normative diagram of an archive file:
+Here is a non-normative diagram of an archive file in general:
 
 ```
-ArchiveHeader
-optionally compressed {
+ArchiveHeader // feature flags
+compressed {
+    // Data Region
     for each item {
-        if streaming is enabled {
-            StreamingHeader(item) // file type and file name
+        if streaming metadata is enabled {
+            StreamingHeader(item) // file type and file name (not file size)
+            (optional split in compression stream)
+            for each chunk of up to 0xffff bytes of item.contents {
+                chunk_size
+                chunk
+            }
+            CRC32 of StreamingHeader and each chunk_size and chunk
+        } else { // streaming metadata is not enabled
+            (optional split in compression stream)
+            item.contents
         }
-        if sometimes {
-            split compression stream
-        }
-        SometimesChunked(item.contents)
-        if streaming is enabled and CRC32 is enabled {
-            CRC32(StreamingHeader(item) and SometimesChunked(item.contents))
-        }
-    }
-    if streaming is enabled and index is enabled and compression is not enabled {
-        StreamingSentinel
     }
 }
-if index is enabled {
-    optionally compressed {
+if index metadata is enabled {
+    compressed {
+        // Index Region
         for each item {
-            IndexItem(item) // location, file type, file name, crc32
-        }
-        if CRC32 is enabled {
-            CRC32(the IndexItem list)
+            IndexItem(item) // file type, file name, file size, crc32 of contents, and location of
+                            // the corresponding split in the Data Region compression stream, if any
         }
     }
-    ArchiveFooter
+    ArchiveFooter // location and crc32 of the Index Region
 }
+```
+
+Here's a non-normative diagram with no index metadata:
+```
+ArchiveHeader // feature flags
+compressed {
+    // Data Region
+    for each item {
+        StreamingHeader(item) // file type and file name (not file size)
+        for each chunk of up to 0xffff bytes of item.contents {
+            chunk_size
+            chunk
+        }
+        CRC32 of StreamingHeader and each chunk_size and chunk
+    }
+}
+```
+
+Here's a non-normative diagram with no streaming metadata:
+```
+ArchiveHeader // feature flags
+compressed {
+    // Data Region
+    for each item {
+        (optional split in compression stream)
+        item.contents
+    }
+}
+compressed {
+    // Index Region
+    for each item {
+        IndexItem(item) // file type, file name, file size, crc32 of contents, and location of
+                        // the corresponding split in the Data Region compression stream, if any
+    }
+}
+ArchiveFooter // location and crc32 of the Index Region
 ```
 
 ## General Design Discussion
@@ -73,20 +107,27 @@ if index is enabled {
 This format is designed to be written once in a single-pass stream, and then read either as a stream or by random access.
 Random-access reading means starting with a consolidated metadata index at the end of the archive, then seeking back to selectively read individual items contents as needed.
 One of either streaming reading support or random-access reading support can be omitted from the archive to save space if the writer knows how the archive format will be read.
-The set of optional features in an archive is encoded in the first 4 bytes.
+The first 4 bytes of the archive encode what metadata is present in the archive.
 
-This format supports compression with the DEFLATE algorithm, the same as gzip.
+This format performs compression with the DEFLATE algorithm, the same as gzip.
 Metadata and contents from multiple items can be combined into a single compression stream,
 resulting in compression ratios comparable to `.tar.gz` archives.
 However, the writer can strategically place breaks in the compression stream to support selective reading by random access.
 This gives the best of both worlds for large items and small items.
+
+Note that the DEFLATE compression algorithm includes encoding the end of its stream.
+This is significant for parsing the structure of this archive format.
 
 There is no support for compression algorithms beyond DEFLATE.
 This archive format prioritizes ease of implementation over optimizing compression ratios,
 and DEFLATE was chosen because it is the most widely implemented lossless compression algorithm in the world as of 2025;
 nearly every programming language standard library supports DEFLATE compression.
 
-This format optionally includes crc32 checksums (also widely implemented in standard libraries) to guard against subtle and accidental corruption, especially during the selective reading use case.
+This format includes crc32 checksums (also widely implemented in standard libraries) to guard against subtle and accidental corruption.
+Every byte of data in an archive is included in some redundancy check.
+File names, types, and contents are hashed with crc32, and the remaining special bits in the `ArchiveHeader` and `ArchiveFooter`
+are covered by bespoke checksums or parity checks.
+
 Note that to guard against malicious corruption, an external cryptographically secure checksum should be used on the entire archive,
 which is out of scope for this specification.
 
@@ -119,7 +160,7 @@ A file type is an integer with one of the following values. See also the dedicat
 * `2` - empty directory
 * `3` - symlink
 
-A file is a sequence of bytes that can be accessed in one of the following modes:
+A file is a sequence of bytes that can be accessed in some combination of the following modes:
 * streaming write
 * streaming read
 * random-access read
@@ -152,22 +193,24 @@ There is never any padding or unused space between specified structures or field
 
 There are 4 regions to an archive:
 
-1. `ArchiveHeader`: Never compressed
-2. Data Region: Optionally compressed in one or more streams
-3. (optional) Index Region: Optionally compressed separately in one stream
-4. (optional) `ArchiveFooter`: Uncompressed
+1. `ArchiveHeader`: 4 bytes, not compressed
+2. Data Region: Compressed in one or more streams, optionally includes streaming metadata
+3. (optional) Index Region: Compressed separately in one stream
+4. (optional) `ArchiveFooter`: 16 bytes, not compressed
 
-A writer produces each of these sections in order.
-A writer may require a tempfile to write the Index Region on the side while producing the Data Region,
-then concatenate the Index Region after the Data Region is done.
+An archive with streaming metadata metadata enabled can be read starting with the `ArchiveHeader`, then reading through just the Data Region.
+An archive with index metadata enabled can be read by starting with the `ArchiveHeader`, then jumping to the `ArchiveFooter`,
+then reading the Index Region, and then any individual item contents can be read by jumping into the Data Region.
+An archive with both streaming and index metadata enabled can be read in either way.
 
-A streaming reader only needs to read the `ArchiveHeader`, then the Data Region.
-A random-access reader needs to read the `ArchiveHeader`, then the `ArchiveFooter`, then the Index Region,
-then can read the contents of any desired item from the Data Region.
+An archive can be written from start to finish with each item being processed one at a time.
+The length of the each item contents does not need to be known before writing the item contents to the Data Region.
+When index metadata is enabled, the Index Region can effectively be created in parallel to the Data Region in a tempfile,
+then concatenated to the archive once the Data Region is complete.
 
-Any reader may read only part of the archive, such as streaming only the first item's contents then stopping.
-If a reader does not encounter a structure documented in this specification, then the associated requirements on readers do not apply.
-For example, if a reader does not encounter the `ArchiveFooter`, then the requirement to verify the `footer_checksum` does not apply to that reader.
+When reading an archive with both streaming and index metadata enabled, it is possible to read just the `ArchiveHeader` and Data Region,
+and then predict every remaining byte in the archive, after decompression.
+Any deviation from such a prediction would be a violation of the spec.
 
 ### Regions
 
@@ -177,43 +220,23 @@ The `ArchiveHeader` is the following structure:
 
 ```
 struct ArchiveHeader = {
-    archive_signature:           3 bytes  // Always 0xFCF6BE i.e. 0xBE, 0xF6, 0xFC
-    feature_flags_and_checksum:  1 byte
+    archive_signature:  4 bytes  // One of: 0x9DF2F6BE, 0x9EF1F6BE, 0x9FF0F6BE
 }
 ```
 
-The lower 4 bits of `feature_flags_and_checksum` encode the following feature flags:
+There are 3 possible values for `archive_signature` that encode whether streaming metadata and/or index metadata are enabled.
 
-| Bit | Mask | Meaning     |
-|-----|------|-------------|
-|   0 |    1 | Compression |
-|   1 |    2 | CRC32       |
-|   2 |    4 | Streaming   |
-|   3 |    8 | Index       |
-
-The upper 4 bits of `feature_flags_and_checksum` are the bitwise negation of the lower 4 bits.
-For example, `0x0F` would represent a `feature_flags_and_checksum` with all features enabled,
-or `0xB4` would represent only Streaming enabled.
-A full `ArchiveHeader` enabling all features interpreted as a 4-byte integer would be `0x0FFCF6BE`.
-
-A reader must verify the integrity of the `ArchiveHeader` by asserting that `archive_signature` is the expected value
-and that the upper and lower halves of `feature_flags_and_checksum` are bitwise complimentary, or else reject the archive.
-Then if a reader does not support the given set of features, the reader may reject the archive.
-Note that if a reader does not support CRC32, that feature can easily be ignored.
-
-If neither Streaming nor Index are enabled, then neither Compression nor CRC32 may be enabled either.
-This indicates an empty archive with no items.
-In this case, the entire archive is just the 4-byte integer `0xF0FCF6BE`,
-and the end of the `ArchiveHeader` must be the end of the archive file.
-Note that an archive may still have no items even with some other feature flags enabled.
+| Signature    | (As Bytes)    | Streaming | Index |
+|--------------|---------------|-------------------|
+| `0x9DF2F6BE` | `BE F6 F2 9D` | Yes       | No    |
+| `0x9EF1F6BE` | `BE F6 F1 9E` | No        | Yes   |
+| `0x9FF0F6BE` | `BE F6 F0 9F` | Yes       | Yes   |
 
 #### Data Region
 
-If Compression is not enabled, the Data Region is not compressed.
-
-If Compression is enabled, the Data Region is compressed in one or more distinct streams,
+The Data Region is compressed in one or more distinct streams,
 and every byte of the Data Region structures specified below must be included in exactly one compression stream.
-If Index is not enabled, the Data Region must not be split into more than 1 compression stream.
+If index metadata is not enabled, the Data Region must not be split into more than 1 compression stream.
 If the Data Region is split into multiple compression streams,
 the splits must happen at the locations explained below.
 
@@ -223,9 +246,9 @@ Higher thresholds result in better compression ratios, and lower thresholds resu
 The recommended threshold for general purpose archives is 1MiB.
 
 Note that in some cases, all the Data Region structures together comprise 0 bytes of data,
-but the Data Region must still be compressed if Compression is enabled.
+but the Data Region must still be compressed.
 
-If Streaming is enabled, the Data Region contains the following struct for each item:
+If streaming metadata is enabled, the Data Region contains the following struct for each item:
 ```
 struct StreamingItem = {
     // StreamingHeader:
@@ -241,17 +264,17 @@ struct StreamingItem = {
         chunk:       chunk_size bytes
     } until (chunk_size < 0xFFFF)
 
-    // Optional checksum
-    streaming_crc32:  0 or 4 bytes  // of the whole StreamingItem except for this field.
+    streaming_crc32:  4 bytes  // of the whole StreamingItem except for this field.
 }
 ```
-A writer of an archive must set the `streaming_signature` appropriately,
-and a reader should validate the `streaming_signature` to guard against implementation errors.
-Note that checking the `streaming_signature` is never necessary for parsing the structure of the archive.
+
+While a reader should validate the `streaming_signature` to guard against implementation errors,
+note that it is never necessary for parsing the structure of the archive.
 
 The top 2 bits of `type_and_name_size` is the file type as a 2-bit integer.
 The lower 14 bits of `type_and_name_size` is the length of `file_name` in bytes.
 `file_name` is encoded in UTF-8 and has a maximum length of `16383`.
+See the documentation on the `file_name` field below for more information.
 
 The item's contents is the concatenation of each `chunk`.
 Before each `chunk` is a 2-byte `chunk_size` giving the length of the chunk in bytes.
@@ -259,25 +282,11 @@ If `chunk_size` is the maximum value `0xFFFF`, there is at least one more chunk.
 A `chunk_size` less than `0xFFFF` indicates that this is the last `chunk`.
 Note that `chunk_size` can be `0`.
 
-If CRC32 is enabled, `streaming_crc32` is the CRC32 hash of every byte of the `StreamingItem`, after decompression if any, up but not including the `streaming_crc32` field itself.
-Note that sometimes a `StreamingItem` is split between multiple compression streams.
-If CRC32 is not enabled, there is no `streaming_crc32` field.
+`streaming_crc32` is the CRC32 hash of every byte of the `StreamingItem` up to but not including the `streaming_crc32` field itself.
+Note that the hashed contents is always the uncompressed/decompressed contents.
+Note also that a `StreamingItem` can be split between multiple compression streams.
 
-If and only if Streaming and Index are both enabled and Compression is not enabled,
-the Data Region ends with the following structure once:
-
-```
-struct StreamingSentinel = {
-    // StreamingHeader:
-    streaming_signature:  2 bytes  // Always 0xACDC i.e. 0xDC 0xAC
-    zero:                 2 bytes  // Always 0
-}
-```
-
-Note that the `StreamingSentinel` appears to be the first 4 bytes of a `StreamingItem` with the `type_and_name_size` set to 0, but the `StreamingSentinel` does not encode an item in the archive.
-Note that a `file_name` cannot be 0 length; see the dedicated section on the `file_name` field for more details.
-
-If Streaming is not enabled, the Data Region contains the following for each item (instead of a `StreamingItem`):
+If streaming metadata is not enabled, the Data Region contains the following for each item (instead of a `StreamingItem`):
 
 ```
 struct NonStreamingDataRegionItem = {
@@ -288,66 +297,49 @@ struct NonStreamingDataRegionItem = {
 ```
 
 This is simply the item's contents with no other metadata before or after.
-How to parse the Data Region when Streaming is not enabled is explained in the Index Region documentation.
+How to parse the Data Region when streaming metadata is not enabled is explained in the Index Region documentation.
 
-If Compression is enabled, the end of the Data Region is always the end of a compression stream.
-A streaming reader can be sure that the end of a compression stream just before where a `streaming_signature` would be expected signals the end of the Data Region.
+The end of the Data Region is always the end of a compression stream.
+This means that the end of a compression stream where a `streaming_signature` would be expected always signals the end of the Data Region.
 Note that there can be 0 occurrences of the `StreamingItem` struct in the Data Region,
-but if Compression is enabled, the Data Region always contains at least 1 compression stream.
+but the Data Region always contains at least 1 compression stream.
 
 #### Index Region
 
-If Index is not enabled, there is no Index Region.
-This section describes the Index Region when Index is enabled.
+If index metadata is not enabled, there is no Index Region.
+This section describes the Index Region when index metadata is enabled.
 
-If Compression is not enabled, the Index Region is not compressed.
-If Compression is enabled, all the structures of the Index Region are compressed together in one compression stream.
+All the structures of the Index Region are compressed together in one compression stream.
 
 The Index Region contains the following structure for each item:
 
 ```
 struct IndexItem = {
-    contents_crc32:      0 or 4 bytes
     jump_location:       8 bytes       // Can be 0 meaning unspecified
     file_size:           8 bytes
+    contents_crc32:      4 bytes
     type_and_name_size:  2 bytes
     file_name:           (type_and_name_size & 0x3FFF) bytes
 }
 ```
 
-The Index Region and Data Region must be generated with the same sequence of items, same number and order.
-If Streaming is enabled, the fields present in both structs (`type_and_name_size` and `file_name`)
+The Index Region and Data Region must encode the same sequence of items, same number and order.
+If streaming metadata is enabled, the fields present in both structs (`type_and_name_size` and `file_name`)
 must exactly match between each `IndexItem` and the corresponding `StreamingItem`.
 
 `file_size` is the size of the of the item's contents, after decompression if any.
 
-If CRC32 is enabled, `contents_crc32` is the CRC32 of the contents of the item, after decompression if any, not including any `chunk_size` fields if any.
+`contents_crc32` is the CRC32 of the contents of the item, after decompression, not including `chunk_size` fields if any.
 This means that if the item is extracted to a file system, `contents_crc32` is the CRC32 of the extracted file contents.
-If CRC32 is not enabled, there is no `contents_crc32` field.
 
 The `jump_location` field can sometimes enable a reader to jump into the middle of the archive and read the item's contents without needing to read the entire Data Region up to that point.
 However, sometimes jumping to a specific item's contents is not possible, in which case the `jump_location` will be 0.
 
-If Compression is not enabled, then every item's `jump_location` must be the offset from the start of the archive to one of the following:
-if Streaming is enabled, the corresponding `StreamingItem`'s first `chunk_size`;
-if Streaming is not enabled, the corresponding `NonStreamingDataRegionItem`'s `contents`.
-If Compression is not enabled, a reader must verify that every `jump_location` is non-zero.
-(As a reminder, a reader is only strictly required to verify structures that it actually encounters in the archive.)
-
-If Compression is enabled, then every non-zero `jump_location` specifies the offset from the start of the archive to a split in the Data Region compression stream contained within the corresponding `StreamingItem` or `NonStreamingDataRegionItem`,
+Then every non-zero `jump_location` specifies the offset from the start of the archive to a split in the Data Region compression stream contained within the corresponding `StreamingItem` or `NonStreamingDataRegionItem`,
 and every split in the Data Region compression stream must be specified by exactly one `jump_location`.
 
-A reader must verify that every non-zero `jump_location` is less than the start of the Index Region.
-A reader must also verify that each non-zero `jump_location` in the Index Region is monotonically increasing,
-meaning each after the first is greater than or equal to the previous.
-These checks guard against overlapping or out-of-order structures, which mitigates zip-bomb-like denial of service attacks.
-
-Note that when an item's `file_size` is `0` and Streaming is not enabled, then some odd but still sound situations appear with the `jump_location` fields.
-In this situation, when Compression is not enabled, multiple consecutive items will have the same `jump_location`;
-and when Compression is enabled, a stream split could arguably be considered to be in multiple `NonStreamingDataRegionItem` structs,
-however only the first of such item's `jump_location` must specifying the stream split.
-
-In order for a random-access reader to location the contents of an arbitrary item, the following pseudocode can effectively be used to compute `stream_start_offset` and `skip_bytes` for each item:
+Note that because the structure of the Data Region can be entirely determined by information in the Index Region,
+the following pseudocode can be used to determine how to jump to the contents of each item:
 
 ```
 // Precompute stream_start_offset and skip_bytes for all index items:
@@ -358,7 +350,7 @@ for each index_item {
         stream_start_offset = index_item.jump_location
         skip_bytes = 0
     } else {
-        if Streaming is enabled {
+        if streaming metadata is enabled {
             // Skip the corresponding StreamingItem's fields before the contents.
             skip_bytes += 4 + index_item.name_size
         }
@@ -367,90 +359,60 @@ for each index_item {
     index_item.skip_bytes = skip_bytes
     // For the next item, skip the file_contents of this item.
     skip_bytes += index_item.file_size
-    if Streaming is enabled {
+    if streaming metadata is enabled {
         let chunking_overhead = 2 * (floor(index_item.file_size / 0xFFFF) + 1)
         skip_bytes += chunking_overhead
-        if CRC32 is enabled {
-            // Also skip the corresponding StreamingItem's fields after the contents.
-            skip_bytes += 4
-        }
+        // Also skip the corresponding StreamingItem's fields after the contents.
+        skip_bytes += 4
     }
 }
 
 // Jump to a specific item.
 let index_item = the item to jump to.
-if index_item.file_size == 0 {
-    // There is no contents
-    stop
-}
-
-if Compression is not enabled {
-    assert index_item.skip_bytes == 0
-    seek to index_item.stream_start_offset
-    if Streaming is enabled {
-        // What follows is the first chunk_size of the item's contents.
-    } else {
-        // What follows is the item's contents.
-    }
+seek to index_item.stream_start_offset in the archive file.
+read and decompress until index_item.skip_bytes decompressed bytes have been read.
+if streaming metadata is enabled {
+    // What follows in the compression stream is the first chunk_size of the item's contents.
 } else {
-    seek to index_item.stream_start_offset in the archive file.
-    read and decompress until index_item.skip_bytes decompressed bytes have been read.
-    if Streaming is enabled {
-        // What follows in the compression stream is the first chunk_size of the item's contents.
-    } else {
-        // What follows in the compression stream is the item's contents.
-    }
+    // What follows in the compression stream is the item's contents.
 }
 ```
 
-If Compression is enabled, the compressed stream ends exactly where the `ArchiveFooter` begins,
-and the end of Index Region is exactly at the end of the decompressed bytes from the compression stream;
-note that the Index Region can be empty, in which case the compression stream will contain `0` decompressed bytes.
-
-If Compression is not enabled, the Index Region ends exactly where the `ArchiveFooter` begins.
+The compression stream for the Index Region ends at the end of the last `IndexItem` struct,
+and the `ArchiveHeader` begins immediately after the compression stream ends.
+If the archive contains no items, the Index Region is a compression stream that contains 0 bytes.
 
 #### `ArchiveFooter`
 
-If Index is not enabled, there is no `ArchiveFooter`.
-This section describes the `ArchiveFooter` when Index is enabled.
+If index metadata is not enabled, there is no `ArchiveFooter`.
+This section describes the `ArchiveFooter` when index metadata is enabled.
 
 ```
 struct ArchiveFooter = {
-    index_crc32:            0 or 4 bytes
+    index_crc32:            4 bytes
     index_region_location:  8 bytes
     footer_checksum:        1 byte
     footer_signature:       3 bytes  // Always 0xCFE9EE i.e. 0xEE 0xE9 0xCF
 }
 ```
 
-A reader must verify there is no overlap between the `ArchiveFooter` and `ArchiveHeader`;
-this can be done by requiring that the start of the `ArchiveFooter` is at least 4.
-A reader must verify `footer_signature` to guard against corruption due to truncation.
+The archive file must end at the end of the `ArchiveFooter`.
+There is never overlap between the `ArchiveFooter` and `ArchiveHeader`,
+which means that the offset of the `ArchiveFooter` is always at least 4.
+Readers are encouraged to verify `footer_signature` to guard against corruption due to archive truncation.
 
 `footer_checksum` is the lower 8 bits of the sum of each individual byte of `index_region_location`.
 For example if `index_region_location` is `123456`, then `footer_checksum` is `35`.
-A writer must set `index_region_location` appropriately,
-and a reader must validate `index_region_location`.
 
-`index_region_location` is the offset in the archive of the start of the Index Region.
-If Compression is enabled, a compression stream begins at the given offset.
+`index_region_location` is the offset in the archive of the start of the compression stream that contains the Index Region.
+`index_region_location` is always at least 4 and always less than the offset of the `ArchiveFooter`.
 
-A reader must verify there is no overlap between the `ArchiveHeader`, the Index Region, and the `ArchiveFooter`.
-If a reader has been streaming the archive input file, then this check is trivially already done.
-A random-access reader jumping to the `ArchiveFooter` can check this with the following:
-`index_region_location` must be at least `4`;
-if Compression is enabled `index_region_location` must be less than the start of the `ArchiveFooter`,
-otherwise it must be less than or equal to the start of the `ArchiveFooter`.
-Note that ensuring no overlap between the Data Region and other regions is discussed in the Index Region documentation above.
-
-If CRC32 is enabled, `index_crc32` is the CRC32 of the entire Index Region, after decompression if any.
-
-The archive file must end at the end of the `ArchiveFooter`.
+`index_crc32` is the CRC32 of the entire Index Region, after decompression.
 
 ### `file_name`
 
 There are some restrictions placed on `file_name` fields to mitigate compatibility issues with some environments.
-However note that readers must be prepared to check for and handle problems.
+However note that readers must be prepared to check for and handle problems beyond what this specification mitigates.
 Notably, duplicate file names are not inherently forbidden by this archive format,
 and collisions between items are possible even when there is no obvious similarity between item names.
 A writer should avoid causing name collisions,
@@ -482,7 +444,7 @@ Let `segments` be the result of splitting `file_name` on `/`.
 
 For each `segment` in `segments`:
 * `segment` must not be empty.
-* `segment` must not be `.` or `..` (byte value `0x2e`). (See `file_type` for how symlink targets different slightly in this rule.)
+* `segment` must not be `.` or `..` (byte value `0x2e`). (See `file_type` for how symlink targets differ slightly in this rule.)
 
 This forbids non-normalized paths and path traversal vulnerabilities.
 
@@ -502,19 +464,23 @@ An item's file type is encoded as a 2-bit integer:
 
 A reader may reject archives with unsupported file types.
 
-The distinction between type `0` and `1` is that the latter should have its `chmod +x` bit set on POSIX systems.
+The distinction between type `0` and `1` is that the latter should have its executable bit set on POSIX systems,
+in which case readers are encouraged to set `mode |= (mode & 0o444) >> 2` after file creation rather than simply enabling all three executable bits;
+this is to respect any `umask` setting that may have limited the permissions lower than `0o644`.
 Note that on Windows, executeability is generally determined by file extension, so an `.exe` file may have file type `0`.
 
 A file of type `2` is only necessary to include in an archive if no other item in the archive implies the need for the directory to exist as its ancestor; see `file_name` above.
 It is not possible to specify any metadata for a directory, such as permission bits, timestamps, or owner.
+This specification does not guarantee any particular ordering of items in an archive,
+which means a reader should be prepared to handle an empty directory specified after another item has already created the directory implicitly as an ancestor, which should not be an error.
 If `file_type` is `2`, then the item's contents must be 0-length.
 
 A file of type `3` is a POSIX symlink.
 The item's contents is the target.
-The maximum contents length for a symlink in this archive format is `4095`;
+The maximum contents length for a symlink target in this archive format is `4095`;
 note however that a target file system may impose a different limit.
-This specification places restrictions on symlink targets, similar to restrictions on `file_name`.
 
+This specification places restrictions on symlink targets, similar to restrictions on `file_name`.
 All the same restrictions on `file_name` apply to symlink targets, except that `.` and `..` segments are sometimes permitted:
 If the entire link target is `.`, it is permitted, otherwise `.` segments are not allowed.
 Let `depth` be the number of `/` bytes in the item's `file_name` (not in the link target).
@@ -577,3 +543,91 @@ Here are some other minor criticisms of the ZIP file format. If ZIP files weren'
 * Compression and checksums only cover file contents, not file metadata.
 * The structure of an archive is so unconstrained that regions of the archive could be encoded out of order or even overlapping one another. This leads to exploits like the [zip bomb technique used by David Fifield](https://www.bamsoftware.com/hacks/zipbomb/) for extreme compression, which can be a security concern.
 
+Simplified Zip:
+```
+for each item {
+    LocalFileHeader(item) // name, size, crc32
+    optionally compressed {
+        item.contents
+    }
+}
+for each item {
+    CentralDirectoryHeader(item) // name, size, crc32, location of LocalFileHeader(item)
+}
+EndOfCentralDirectoryRecord // location of first CentralDirectoryHeader
+```
+
+Common Zip:
+```
+for each item {
+    LocalFileHeader(item) // name, sometimes includes sizes
+    optionall compressed {
+        item.contents
+    }
+    if didn't include sizes {
+        DataDescriptor(item) // sizes, crc32
+    }
+}
+for each item {
+    CentralDirectoryHeader(item) // name, size, crc32, location of LocalFileHeader(item)
+}
+if sometimes {
+    Zip64EndOfCentralDirectoryRecord // location of first CentralDirectoryHeader
+    Zip64EndOfCentralDirectoryLocator // location of Zip64EndOfCentralDirectoryRecord
+}
+EndOfCentralDirectoryRecord // sometimes location of first CentralDirectoryHeader
+```
+
+Full Madness Zip:
+```
+for each item in unspecified order {
+    (optional padding)
+    LocalFileHeader(item) // name, sometimes includes sizes
+    optionally encrypted {
+        optionally compressed {
+            item.contents
+        }
+    }
+    if didn't include sizes {
+        DataDescriptor(item) // sizes, crc32
+    }
+}
+if sometimes {
+    ArchiveDecryptionHeader
+    ArchiveExtraDataRecord
+}
+(optional padding)
+for each item in unspecified order {
+    CentralDirectoryHeader(item) // name, size, crc32, location of LocalFileHeader(item)
+}
+(optional padding)
+if sometimes {
+    Zip64EndOfCentralDirectoryRecord // location of first CentralDirectoryHeader
+    (optional padding)
+    Zip64EndOfCentralDirectoryLocator // location of Zip64EndOfCentralDirectoryRecord
+}
+EndOfCentralDirectoryRecord // sometimes location of first CentralDirectoryHeader
+```
+
+Tar (and also `ar`):
+```
+for each item {
+    Header(item) // name, size
+    item.contents
+    (alignment padding)
+}
+```
+
+`.tar.gz`:
+```
+GzipHeader // timestamp, checksum of header
+compressed {
+    // Tar
+    for each item {
+        Header(item) // name, size
+        item.contents
+        (alignment padding)
+    }
+}
+GzipFooter // crc32 of tar
+```

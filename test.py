@@ -65,8 +65,7 @@ def test_permutations():
 
     for options in (tuple(itertools.chain(*v)) for v in itertools.product(
         [(), ("--no-index",), ("--no-streaming",)],
-        [(), ("--no-crc32",)],
-        [(), ("--stream-split-threshold=0",), ("--no-compression",)],
+        [(), ("--stream-split-threshold=0",)],
 
         #[("--some-specific-test",)],
     )):

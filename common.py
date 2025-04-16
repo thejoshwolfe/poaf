@@ -1,7 +1,4 @@
 
-import os, re
-
-archive_signature = b'\xbe\xf6\xfc' # 0xFCF6BE
 item_signature    = b'\xdc\xac'     # 0xACDC
 footer_signature  = b'\xee\xe9\xcf' # 0xCFE9EE
 
@@ -10,8 +7,6 @@ FILE_TYPE_POSIX_EXECUTABLE = 1
 FILE_TYPE_DIRECTORY = 2
 FILE_TYPE_SYMLINK = 3
 
-empty_flags = 0xF0
-
 class PoafException(Exception): pass
 class UnsupportedFeatureError(PoafException): pass
 class InvalidArchivePathError(PoafException): pass
@@ -19,38 +14,17 @@ class MalformedInputError(PoafException): pass
 class IncompatibleInputError(PoafException): pass
 class ItemContentsTooLongError(PoafException): pass
 
-# Feature flags
-class FeatureFlags:
-    def __init__(self, flags):
-        if (0xF0 & ~flags) >> 4 != flags & 0x0F: raise MalformedInputError("feature flags corrupted")
-        if 1 <= (flags & 0x0F) <= 3: raise MalformedInputError("invalid feature flags")
-        self.compression = bool(flags & 0x01)
-        self.crc32       = bool(flags & 0x02)
-        self.streaming   = bool(flags & 0x04)
-        self.index       = bool(flags & 0x08)
-
-    @staticmethod
-    def from_values(
-        compression,
-        crc32,
-        streaming,
-        index,
-    ):
-        return FeatureFlags(
-            (0x01 if compression else 0x10) |
-            (0x02 if crc32       else 0x20) |
-            (0x04 if streaming   else 0x40) |
-            (0x08 if index       else 0x80) |
-            0
-        )
-    def value(self):
-        return (
-            (0x01 if self.compression else 0x10) |
-            (0x02 if self.crc32       else 0x20) |
-            (0x04 if self.streaming   else 0x40) |
-            (0x08 if self.index       else 0x80) |
-            0
-        )
+# ArchiveHeader
+def validate_archive_header(archive_header_buf):
+    if archive_header_buf == b"\xBE\xF6\xF2\x9D": return True, False
+    if archive_header_buf == b"\xBE\xF6\xF1\x9E": return False, True
+    if archive_header_buf == b"\xBE\xF6\xF0\x9F": return True, True
+    raise MalformedInputError("not a poaf archive")
+def get_archive_header_buf(streaming_enabled, index_enabled):
+    if streaming_enabled and not index_enabled: return b"\xBE\xF6\xF2\x9D"
+    if not streaming_enabled and index_enabled: return b"\xBE\xF6\xF1\x9E"
+    if streaming_enabled and index_enabled:     return b"\xBE\xF6\xF0\x9F"
+    assert False
 
 # Paths
 def validate_archive_path(archive_path, file_name_of_symlink=None):
@@ -59,6 +33,7 @@ def validate_archive_path(archive_path, file_name_of_symlink=None):
     Pass in a str, returns a bytes.
     Give file_name_of_symlink as a str to put this function in symlink validation mode.
     """
+    import re
 
     # Check length and UTF-8 validity.
     if len(archive_path) == 0: raise InvalidArchivePathError("Path must not be empty")
