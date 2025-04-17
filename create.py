@@ -11,12 +11,6 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
 
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--no-index", action="store_true", help=
-        "Optimize the archive for streaming reading, omitting the Index Region.")
-    group.add_argument("--no-streaming", action="store_true", help=
-        "Optimize the archive for random-access in-place reading, omitting the inline metadata in the Data Region.")
-
     parser.add_argument("--stream-split-threshold", type=int, default=0x10000, help=
         "The minimum number of compressed bytes between stream splits to enable random-access jumping from the index.")
 
@@ -32,8 +26,6 @@ def main():
     args = parser.parse_args()
 
     with Writer(
-        streaming_enabled=not args.no_streaming,
-        index_enabled=not args.no_index,
         root=args.root,
         output_path=args.output,
         stream_split_threshold=args.stream_split_threshold,
@@ -42,26 +34,22 @@ def main():
             writer.add(file)
 
 class Writer:
-    def __init__(self, streaming_enabled, index_enabled, root, output_path, stream_split_threshold):
-        self.streaming_enabled = streaming_enabled
-        self.index_enabled = index_enabled
+    def __init__(self, root, output_path, stream_split_threshold):
         self.root = root
+        self.stream_split_threshold = stream_split_threshold
 
         self._output = open(output_path, "wb")
         try:
             # ArchiveHeader
-            archive_header = get_archive_header_buf(streaming_enabled, index_enabled)
             self._output.write(archive_header)
 
             # Data Region
             self._start_stream()
 
-            if self.index_enabled:
-                self.stream_split_threshold = stream_split_threshold
-                # Start the index
-                self._index_crc32 = 0
-                self._index_compressor = Compressor()
-                self._index_tmpfile = tempfile.TemporaryFile()
+            # Start the index
+            self._index_crc32 = 0
+            self._index_compressor = Compressor()
+            self._index_tmpfile = tempfile.TemporaryFile()
         except:
             self._output.close()
             raise
@@ -113,122 +101,102 @@ class Writer:
         else: raise Exception("unrecognized type code: " + repr(type_code))
         type_and_name_size = (file_type << 14) | len(name)
 
-        if self.streaming_enabled:
-            # Write StreamingItem pre-contents fields.
-            out_buf = (
-                item_signature +
-                struct.pack("<H", type_and_name_size) +
-                name
-            )
-            self._write(out_buf)
-            streaming_crc32 = zlib.crc32(out_buf)
+        # Write DataItem pre-contents fields.
+        out_buf = (
+            item_signature +
+            struct.pack("<H", type_and_name_size) +
+            name
+        )
+        self._write(out_buf)
+        streaming_crc32 = zlib.crc32(out_buf)
 
         # Compute jump_location and possibly split compression stream.
-        if self.index_enabled:
-            # We might want to split here.
-            if self._output.tell() - self._stream_start < self.stream_split_threshold:
-                # Nah, not yet.
-                jump_location = 0
-            else:
-                # Yes, split the stream.
-                self._output.write(self._compressor.flush())
-                jump_location = self._output.tell() # Note, have to re-tell() after the above flush()
-                self._start_stream()
+        # We might want to split here.
+        if self._output.tell() - self._stream_start < self.stream_split_threshold:
+            # Nah, not yet.
+            jump_location = 0
+        else:
+            # Yes, split the stream.
+            self._output.write(self._compressor.flush())
+            jump_location = self._output.tell() # Note, have to re-tell() after the above flush()
+            self._start_stream()
 
         # Contents
         file_size = 0
-        if self.index_enabled:
-            contents_crc32 = 0
+        contents_crc32 = 0
         if file_type in (FILE_TYPE_NORMAL_FILE, FILE_TYPE_POSIX_EXECUTABLE):
             with open(input_path, "rb") as f:
                 while True:
                     buf = f.read(0xffff)
-                    if self.streaming_enabled:
-                        # Chunked encoding
-                        out_buf = (
-                            struct.pack("<H", len(buf)) +
-                            buf
-                        )
-                        streaming_crc32 = zlib.crc32(out_buf, streaming_crc32)
-                    else:
-                        out_buf = buf
+                    out_buf = (
+                        struct.pack("<H", len(buf)) +
+                        buf
+                    )
                     self._write(out_buf)
+                    streaming_crc32 = zlib.crc32(out_buf, streaming_crc32)
 
                     file_size += len(buf)
-                    if self.index_enabled:
-                        contents_crc32 = zlib.crc32(buf, contents_crc32)
+                    contents_crc32 = zlib.crc32(buf, contents_crc32)
 
                     if len(buf) < 0xffff: break
 
         elif file_type == FILE_TYPE_DIRECTORY:
-            if self.streaming_enabled:
-                # Chunked encoding
-                out_buf = b"\x00\x00"
-                streaming_crc32 = zlib.crc32(out_buf, streaming_crc32)
-                self._write(out_buf)
-            else:
-                # Nothing
-                pass
+            out_buf = b"\x00\x00"
+            self._write(out_buf)
+            streaming_crc32 = zlib.crc32(out_buf, streaming_crc32)
         elif file_type == FILE_TYPE_SYMLINK:
             link_target_str = os.readlink(input_path)
             buf = validate_archive_path(link_target_str, file_name_of_symlink=archive_path)
-            if self.streaming_enabled:
-                # Chunked encoding
-                out_buf = (
-                    struct.pack("<H", len(buf)) +
-                    buf
-                )
-                streaming_crc32 = zlib.crc32(out_buf, streaming_crc32)
-            else:
-                out_buf = buf
+            out_buf = (
+                struct.pack("<H", len(buf)) +
+                buf
+            )
             self._write(out_buf)
+            streaming_crc32 = zlib.crc32(out_buf, streaming_crc32)
             file_size += len(buf)
-            if self.index_enabled:
-                contents_crc32 = zlib.crc32(buf, contents_crc32)
+            contents_crc32 = zlib.crc32(buf, contents_crc32)
         else: assert False
 
-        # StreamingHeader fields after the contents
-        if self.streaming_enabled:
-            self._write(struct.pack("<L", streaming_crc32))
+        # DataItem fields after the contents
+        self._write(struct.pack("<L", streaming_crc32))
 
         # IndexItem
-        if self.index_enabled:
-            out_buf = (
-                struct.pack("<LQQH",
-                    contents_crc32,
-                    jump_location,
-                    file_size,
-                    type_and_name_size,
-                ) +
-                name
-            )
-            self._write_to_index(out_buf)
-            self._index_crc32 = zlib.crc32(out_buf, self._index_crc32)
+        out_buf = (
+            struct.pack("<LQQH",
+                contents_crc32,
+                jump_location,
+                file_size,
+                type_and_name_size,
+            ) +
+            name
+        )
+        self._write_to_index(out_buf)
+        self._index_crc32 = zlib.crc32(out_buf, self._index_crc32)
 
     def close(self):
         # End the Data Region
         self._output.write(self._compressor.flush())
         self._compressor = None
 
-        if self.index_enabled:
-            # Index Region.
-            index_region_location = self._output.tell()
-            self._index_tmpfile.write(self._index_compressor.flush())
-            self._index_compressor = None
-            self._index_tmpfile.seek(0)
-            shutil.copyfileobj(self._index_tmpfile, self._output)
-            self._index_tmpfile.close()
-            self._index_tmpfile = None
+        # Index Region.
+        index_region_location = self._output.tell()
+        self._index_tmpfile.write(self._index_compressor.flush())
+        self._index_compressor = None
+        self._index_tmpfile.seek(0)
+        shutil.copyfileobj(self._index_tmpfile, self._output)
+        self._index_tmpfile.close()
+        self._index_tmpfile = None
 
-            # ArchiveFooter.
-            index_region_location_buf = struct.pack("<Q", index_region_location)
-            footer_checksum = bytes([0xFF & sum(index_region_location_buf)])
-            self._output.write(
-                struct.pack("<L", self._index_crc32) +
-                index_region_location_buf +
-                footer_checksum +
-                footer_signature
-            )
+        # ArchiveFooter.
+        index_region_location_buf = struct.pack("<Q", index_region_location)
+        footer_checksum = bytes([0xFF & sum(index_region_location_buf)])
+        self._output.write(
+            struct.pack("<L", self._index_crc32) +
+            index_region_location_buf +
+            footer_checksum +
+            footer_signature
+        )
+
         # Done
         self._output.close()
 
@@ -239,8 +207,7 @@ class Writer:
 
     def _start_stream(self):
         self._compressor = Compressor()
-        if self.index_enabled:
-            self._stream_start = self._output.tell()
+        self._stream_start = self._output.tell()
 
 def Compressor():
     return zlib.compressobj(wbits=-zlib.MAX_WBITS)

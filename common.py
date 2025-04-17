@@ -1,6 +1,7 @@
 
-item_signature    = b'\xdc\xac'     # 0xACDC
-footer_signature  = b'\xee\xe9\xcf' # 0xCFE9EE
+archive_header    = b"\xBE\xF6\xF0\x9F" # 0x9FF0F6BE
+item_signature    = b'\xdc\xac'         # 0xACDC
+footer_signature  = b'\xee\xe9\xcf'     # 0xCFE9EE
 
 FILE_TYPE_NORMAL_FILE = 0
 FILE_TYPE_POSIX_EXECUTABLE = 1
@@ -8,23 +9,10 @@ FILE_TYPE_DIRECTORY = 2
 FILE_TYPE_SYMLINK = 3
 
 class PoafException(Exception): pass
-class UnsupportedFeatureError(PoafException): pass
 class InvalidArchivePathError(PoafException): pass
 class MalformedInputError(PoafException): pass
 class IncompatibleInputError(PoafException): pass
 class ItemContentsTooLongError(PoafException): pass
-
-# ArchiveHeader
-def validate_archive_header(archive_header_buf):
-    if archive_header_buf == b"\xBE\xF6\xF2\x9D": return True, False
-    if archive_header_buf == b"\xBE\xF6\xF1\x9E": return False, True
-    if archive_header_buf == b"\xBE\xF6\xF0\x9F": return True, True
-    raise MalformedInputError("not a poaf archive")
-def get_archive_header_buf(streaming_enabled, index_enabled):
-    if streaming_enabled and not index_enabled: return b"\xBE\xF6\xF2\x9D"
-    if not streaming_enabled and index_enabled: return b"\xBE\xF6\xF1\x9E"
-    if streaming_enabled and index_enabled:     return b"\xBE\xF6\xF0\x9F"
-    assert False
 
 # Paths
 def validate_archive_path(archive_path, file_name_of_symlink=None):

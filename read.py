@@ -89,7 +89,6 @@ def extract_item(dir, reader, item):
             os.chmod(file_name_path, mode)
 
 def open_path(archive_path, prefer_index=True, require_index=False):
-    if not prefer_index: require_index = False
     file = open(archive_path, "rb")
     try:
         return reader_for_file(file, prefer_index, require_index)
@@ -97,24 +96,22 @@ def open_path(archive_path, prefer_index=True, require_index=False):
         file.close()
         raise
 def reader_for_file(file, prefer_index=True, require_index=False):
+    if not prefer_index: require_index = False
     # ArchiveHeader
-    streaming_enabled, index_enabled = validate_archive_header(file.read(4))
+    if file.read(4) != archive_header: raise MalformedInputError("not a poaf archive")
 
     seekable = file.seekable()
-    if require_index:
-        if not index_enabled:
-            raise IncompatibleInputError("archive does not have the index enabled")
-        if not seekable:
-            raise IncompatibleInputError("archive file does not support seeking")
+    if require_index and not seekable:
+        raise IncompatibleInputError("archive file does not support seeking")
 
-    if (prefer_index and index_enabled and seekable) or not streaming_enabled:
-        return IndexReader(file, streaming_enabled)
+    if prefer_index and seekable:
+        return IndexReader(file)
     else:
-        return StreamingReader(file, index_enabled)
+        return StreamingReader(file)
 
 default_chunk_size = 0x4000
 
-class EmptyReader:
+class BaseReader:
     def __enter__(self): return self
     def __exit__(self, *args): self.close()
     def __iter__(self): return self
@@ -126,13 +123,12 @@ class EmptyReader:
     def open_item(self, item): pass
     def skip_item(self, item): pass
 
-class StreamingReader(EmptyReader):
-    def __init__(self, file, index_enabled, validate_index=True):
+class StreamingReader(BaseReader):
+    def __init__(self, file, validate_index=True):
         self._input = file
-        self.index_enabled = index_enabled
+        self.validating_index = validate_index
 
         self._decompressor = Decompressor()
-        self.validating_index = validate_index and self.index_enabled
         if self.validating_index:
             self._index_tmpfile = tempfile.TemporaryFile()
             self._index_crc32 = 0
@@ -150,7 +146,7 @@ class StreamingReader(EmptyReader):
     def next(self):
         if self._current_item != None: raise ValueError("use skip_item() or call read_from_item() until done")
 
-        # StreamingItem
+        # DataItem
         buf = self._read(4, allow_eof=True)
         if len(buf) == 0:
             self._done_reading_data_region()
@@ -160,14 +156,14 @@ class StreamingReader(EmptyReader):
         (type_and_name_size,) = struct.unpack("<H", buf[2:])
         file_type, name_size = type_and_name_size >> 14, type_and_name_size & 0x3FFF
 
-        # Read the rest of the StreamingItem.
+        # Read the rest of the DataItem.
         name = self._read(name_size)
         file_name_str = _validate_archive_path(name)
 
         streaming_crc32 = zlib.crc32(buf)
         streaming_crc32 = zlib.crc32(name, streaming_crc32)
 
-        item = StreamingItem(file_type, file_name_str, streaming_crc32)
+        item = DataItem(file_type, file_name_str, streaming_crc32)
 
         self._current_item = item
         if item.file_type in (FILE_TYPE_DIRECTORY, FILE_TYPE_SYMLINK):
@@ -178,7 +174,7 @@ class StreamingReader(EmptyReader):
     def read_from_item(self, item, size_limit=0xFFFFFFFFFFFFFFFF):
         if self._current_item != item: raise ValueError("that's not the current item.")
 
-        # Check for stream split before StreamingItem chunked contents.
+        # Check for stream split before DataItem chunked contents.
         allow_eof = item._predicted_index_item.file_size == 0
         chunk_size_buf = self._read(2, allow_eof=allow_eof)
         if len(chunk_size_buf) == 0:
@@ -186,14 +182,13 @@ class StreamingReader(EmptyReader):
             assert self._decompressor.eof
             unused_data = self._decompressor.unused_data
             unused_data_len = len(unused_data)
-            if self.index_enabled:
-                item._predicted_index_item.jump_location = self._input.tell() - unused_data_len
+            item._predicted_index_item.jump_location = self._input.tell() - unused_data_len
             self._decompressor = Decompressor()
 
             # Try again
             chunk_size_buf = self._read(2, unused_data_from_previous_stream=unused_data)
 
-        # StreamingItem chunked contents
+        # DataItem chunked contents
         (chunk_size,) = struct.unpack("<H", chunk_size_buf)
         buf = self._read(chunk_size)
         item.done = len(buf) < 0xFFFF
@@ -217,15 +212,14 @@ class StreamingReader(EmptyReader):
         if item._predicted_index_item.file_size > size_limit: raise ItemContentsTooLongError
 
         # Compute crc32
-        item.streaming_crc32 = zlib.crc32(chunk_size_buf, item.streaming_crc32)
-        item.streaming_crc32 = zlib.crc32(buf,            item.streaming_crc32)
-        if self.index_enabled:
-            item._predicted_index_item.contents_crc32 = zlib.crc32(buf, item._predicted_index_item.contents_crc32)
+        item.streaming_crc32                      = zlib.crc32(chunk_size_buf, item.streaming_crc32)
+        item.streaming_crc32                      = zlib.crc32(buf,            item.streaming_crc32)
+        item._predicted_index_item.contents_crc32 = zlib.crc32(buf,            item._predicted_index_item.contents_crc32)
 
         if item.done:
             self._current_item = None
 
-            # StreamingItem streaming_crc32
+            # DataItem streaming_crc32
             (documented_streaming_crc32,) = struct.unpack("<L", self._read(4))
             if item.streaming_crc32 != documented_streaming_crc32:
                 raise MalformedInputError("streaming_crc32 check failed. calculated: {}, documented: {}".format(item.streaming_crc32, documented_streaming_crc32))
@@ -251,13 +245,6 @@ class StreamingReader(EmptyReader):
             self.read_from_item(item)
 
     def _done_reading_data_region(self):
-        if not self.index_enabled:
-            # Ensure we hit EOF.
-            if not (self._decompressor.eof and len(self._decompressor.unconsumed_tail) == 0): raise MalformedInputError("expected EOF after Data Region")
-            if len(self._input.read(1)) != 0: raise MalformedInputError("expected EOF after Data Region")
-            # That's all there is to check.
-            return
-
         if not self.validating_index:
             # We're choosing not to validate any more of the archive.
             return
@@ -314,10 +301,9 @@ class StreamingReader(EmptyReader):
     def _read(self, n, *, allow_eof=False, unused_data_from_previous_stream=None):
         return _read_from_decompressor(self._decompressor, self._input, n, allow_eof=allow_eof, unused_data_from_previous_stream=unused_data_from_previous_stream)
 
-class IndexReader(EmptyReader):
-    def __init__(self, file, streaming_enabled):
+class IndexReader(BaseReader):
+    def __init__(self, file):
         self._input = file
-        self.streaming_enabled = streaming_enabled
 
         data_region_start = 4
         self._stream_start = data_region_start
@@ -379,19 +365,17 @@ class IndexReader(EmptyReader):
             # This is a stream split
             self._stream_start = jump_location
             self._skip_bytes_since_stream_start = 0
-        elif self.streaming_enabled:
-            # Skip the corresponding StreamingItem's fields before the contents.
+        else:
+            # Skip the corresponding DataItem's fields before the contents.
             self._skip_bytes_since_stream_start += 4 + name_size
         item._stream_start = self._stream_start
         item._skip_bytes_until_contents = self._skip_bytes_since_stream_start
 
         # For the next item, skip the file_contents of this item.
-        self._skip_bytes_since_stream_start += file_size
-        if self.streaming_enabled:
-            chunking_overhead = 2 * ((file_size // 0xFFFF) + 1)
-            self._skip_bytes_since_stream_start += chunking_overhead
-            # Also skip the corresponding StreamingItem's fields after the contents.
-            self._skip_bytes_since_stream_start += 4
+        chunking_overhead = 2 * ((file_size // 0xFFFF) + 1)
+        self._skip_bytes_since_stream_start += file_size + chunking_overhead
+        # Also skip the corresponding DataItem's fields after the contents.
+        self._skip_bytes_since_stream_start += 4
 
         return item
 
@@ -417,17 +401,12 @@ class IndexReader(EmptyReader):
     def read_from_item(self, item):
         assert item._contents_file != None, "call open_item() first"
         size = min(item._remaining_bytes, 0xffff)
-        if self.streaming_enabled:
-            # Also read through the chunk_size.
-            size += 2
+        buf = _read_from_decompressor(item._decompressor, item._contents_file, 2 + size)
+        # validate chunk_size.
+        if struct.unpack("<H", buf[:2])[0] != size: raise MalformedInputError("unexpected chunk_size")
+        buf = buf[2:]
 
-        buf = _read_from_decompressor(item._decompressor, item._contents_file, size)
-
-        if self.streaming_enabled:
-            # Drop the chunk_size.
-            buf = buf[2:]
-
-        item._remaining_bytes -= len(buf)
+        item._remaining_bytes -= size
         if item._remaining_bytes == 0:
             item.done = True
             # Reset in case you want to read it again.
@@ -436,7 +415,7 @@ class IndexReader(EmptyReader):
 
         return buf
 
-class StreamingItem:
+class DataItem:
     def __init__(self, file_type, file_name_str, streaming_crc32_so_far):
         self.file_type = file_type
         self.file_name_str = file_name_str
