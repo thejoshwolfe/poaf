@@ -563,3 +563,37 @@ compressed {
 }
 GzipFooter // crc32 of tar
 ```
+
+`.zip` (simplified):
+```
+for each item {
+    Metadata(item) // name, size
+    compressed {
+        item.contents
+    }
+}
+// Central Directory
+for each item {
+    Metadata(item) // name, size, location
+}
+Footer // backpointer to Central Directory
+```
+
+`.poaf` (simplified):
+```
+Header // signature
+compressed {
+    for each item {
+        Metadata(item) // name
+        (optional split in compression stream)
+        item.contents
+    }
+}
+// Index Region
+compressed {
+    for each item {
+        Metadata(item) // name, size, location
+    }
+}
+Footer // backpointer to Index Region
+```
