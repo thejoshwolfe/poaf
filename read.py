@@ -204,11 +204,11 @@ class StreamingReader(BaseReader):
             try:
                 item.symlink_target = buf.decode("utf8")
             except UnicodeDecodeError as e:
-                raise MalformedInputError("symlink target invalid utf8", e)
+                raise MalformedInputError("symlink target invalid utf8: " + str(e))
             try:
                 validate_archive_path(item.symlink_target, file_name_of_symlink=item.file_name_str)
             except InvalidArchivePathError as e:
-                raise MalformedInputError("illegal symlink target", e)
+                raise MalformedInputError("illegal symlink target: " + str(e))
 
         # Track file size
         item._predicted_index_item.file_size += len(buf)
@@ -288,11 +288,11 @@ class StreamingReader(BaseReader):
         if len(documented_archive_footer) < archive_footer_size: raise MalformedInputError("unexpected EOF")
 
         # Compute what we know the ArchiveFooter should be and compare it all at once.
-        index_region_location_buf = struct.pack("<Q", index_location)
-        footer_checksum = bytes([0xFF & sum(index_region_location_buf)])
+        index_location_buf = struct.pack("<Q", index_location)
+        footer_checksum = bytes([0xFF & sum(index_location_buf)])
         calculated_archive_footer = (
             struct.pack("<L", index_crc32) +
-            index_region_location_buf +
+            index_location_buf +
             footer_checksum +
             footer_signature
         )
@@ -452,11 +452,11 @@ def _validate_archive_footer(archive_footer):
     """ validates footer_checksum and footer_signature and returns index_location """
     if archive_footer[-3:] != footer_signature: raise MalformedInputError("archive footer signature not found. archive truncated?")
     documented_footer_checksum = archive_footer[-4]
-    index_region_location_buf = archive_footer[-12:-4]
-    calculated_footer_checksum = 0xFF & sum(index_region_location_buf)
+    index_location_buf = archive_footer[-12:-4]
+    calculated_footer_checksum = 0xFF & sum(index_location_buf)
     if documented_footer_checksum != calculated_footer_checksum:
         raise MalformedInputError("footer checksum failed. calculated: {}, documented: {}".format(calculated_footer_checksum, documented_footer_checksum))
-    (index_location,) = struct.unpack("<Q", index_region_location_buf)
+    (index_location,) = struct.unpack("<Q", index_location_buf)
     return index_location
 
 def _read_from_decompressor(decompressor, file, decompressed_len, *, allow_eof=False, unused_data_from_previous_stream=None):

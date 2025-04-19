@@ -188,11 +188,11 @@ class Writer:
         self._index_tmpfile = None
 
         # ArchiveFooter.
-        index_region_location_buf = struct.pack("<Q", index_location)
-        footer_checksum = bytes([0xFF & sum(index_region_location_buf)])
+        index_location_buf = struct.pack("<Q", index_location)
+        footer_checksum = bytes([0xFF & sum(index_location_buf)])
         self._output.write(
             struct.pack("<L", self._index_crc32) +
-            index_region_location_buf +
+            index_location_buf +
             footer_checksum +
             footer_signature
         )

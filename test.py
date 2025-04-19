@@ -19,18 +19,42 @@ from common import (
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.parse_args()
+    parser.add_argument("-v", "--verbose", action="store_true")
+    args = parser.parse_args()
 
-    test_from_data()
-    test_permutations()
+    test_from_data(args.verbose)
+    test_create()
 
-def test_from_data():
+def test_from_data(verbose):
     with open("test_data.json") as f:
         test_data = json.load(f)
+
+    current_group = None
+    current_group_count = None
     for test in test_data:
-        print(test["description"] + "...", end="", flush=True)
-        run_test(test)
-        print("pass")
+        if verbose:
+            print(test["description"] + "...", end="", flush=True)
+        else:
+            if current_group != test["group"]:
+                if current_group != None:
+                    print("{0}/{0} pass".format(current_group_count))
+                current_group = test["group"]
+                print(current_group + "...", end="", flush=True)
+                current_group_count = 0
+            current_group_count += 1
+
+        try:
+            run_test(test)
+        except:
+            if not verbose:
+                print("\n" + test["description"] + "...", end="", flush=True)
+            print("", flush=True)
+            raise
+
+        if verbose:
+            print("pass")
+    if not verbose:
+        print("{0}/{0} pass".format(current_group_count))
 
 def from_sliced_hex(a):
     return b"".join(bytes.fromhex(x) for x in a)
@@ -40,11 +64,11 @@ def run_test(test):
 
     expect_error = False
     expected_items = []
-    if test["result"] == "error":
+    if test.get("error", None) != None:
         expect_error = True
         expected_items = itertools.repeat(None)
-    elif type(test["result"]) == list:
-        expected_items = test["result"]
+    elif test.get("items", None) != None:
+        expected_items = test["items"]
     else: assert False
 
     try:
@@ -63,7 +87,11 @@ def run_test(test):
                 while not got_item.done:
                     buf.write(reader.read_from_item(got_item))
                 if not expect_error:
-                    expect_equal(from_sliced_hex(expected_item["contents"]), buf.getvalue())
+                    try:
+                        expected_contents = from_sliced_hex(expected_item["contents"])
+                    except KeyError:
+                        expected_contents = b"\x00" * expected_item["contents_length"]
+                    expect_equal(expected_contents, buf.getvalue())
     except PoafException as e:
         if not expect_error: raise
     else:
@@ -73,7 +101,7 @@ def expect_equal(expected, got):
     if expected == got: return
     raise Exception("expected: " + repr(expected) + ", got: " + repr(got))
 
-def test_permutations():
+def test_create():
     file_name_args = [
         "/dev/null->f:empty_test_file_1.txt",
         "create.py",
