@@ -65,6 +65,26 @@ def main():
         items=[RegularFile("a.txt", b"")],
     ))
 
+    description = "two items"
+    data_item = fromhex("DCAC" "0500") + b"a.txt" + fromhex("0000")
+    data_item += crc32(data_item)
+    data_item2 = fromhex("DCAC" "0500") + b"b.txt" + fromhex("0000")
+    data_item2 += crc32(data_item2)
+    index_region = (
+        fromhex("0000000000000000" "0000000000000000" "00000000" "0500") + b"a.txt" +
+        fromhex("0000000000000000" "0000000000000000" "00000000" "0500") + b"b.txt"
+    )
+    data.append(Test(group, description,
+        fromhex("BEF6F09F") +
+        compress(data_item + data_item2) +
+        compress(index_region) +
+        crc32(index_region) + fromhex("2900000000000000" "29" "eee9cf"),
+        items=[
+            RegularFile("a.txt", b""),
+            RegularFile("b.txt", b""),
+        ],
+    ))
+
     description = "invalid streaming_signature"
     data_item = fromhex("DCA0" "0500") + b"a.txt" + fromhex("0000")
     data_item += crc32(data_item)
@@ -224,6 +244,24 @@ def main():
         error="IndexItem",
     ))
 
+    description = "items out of order"
+    data_item = fromhex("DCAC" "0500") + b"a.txt" + fromhex("0000")
+    data_item += crc32(data_item)
+    data_item2 = fromhex("DCAC" "0500") + b"b.txt" + fromhex("0000")
+    data_item2 += crc32(data_item2)
+    index_region = (
+        fromhex("0000000000000000" "0000000000000000" "00000000" "0500") + b"b.txt" +
+        fromhex("0000000000000000" "0000000000000000" "00000000" "0500") + b"a.txt"
+    )
+    data.append(Test(group, description,
+        fromhex("BEF6F09F") +
+        compress(data_item + data_item2) +
+        compress(index_region) +
+        crc32(index_region) + fromhex("2900000000000000" "29" "eee9cf"),
+        error="IndexItem",
+    ))
+
+
     ############################################################################
     group = "Stream split"
     ############################################################################
@@ -299,6 +337,26 @@ def main():
         PosixExecutable("b.sh", b"#!/usr/bin/env bash\necho hello\n"),
         EmptyDirectory("dir"),
         Symlink("b", "b.sh"),
+    ]
+    data.append(Test(group, description,
+        archive_from_items(items),
+        items=items,
+    ))
+
+    description = "empty dir is a later implicit ancestor"
+    items = [
+        EmptyDirectory("a"),
+        RegularFile("a/b.txt", b""),
+    ]
+    data.append(Test(group, description,
+        archive_from_items(items),
+        items=items,
+    ))
+
+    description = "empty dir is an earlier implicit ancestor"
+    items = [
+        RegularFile("a/b.txt", b""),
+        EmptyDirectory("a"),
     ]
     data.append(Test(group, description,
         archive_from_items(items),
@@ -384,6 +442,13 @@ def main():
 
     description = "implicit ancestor dir"
     items = [RegularFile("a/b/c.txt", b"")]
+    data.append(Test(group, description,
+        archive_from_items(items),
+        items=items,
+    ))
+
+    description = "file name non-ASCII Unicode"
+    items = [RegularFile("ä.txt", b"")]
     data.append(Test(group, description,
         archive_from_items(items),
         items=items,
@@ -576,12 +641,126 @@ def main():
 
 
     ############################################################################
+    group = "extraction concerns"
+    ############################################################################
+
+    description = "file name collision"
+    items = [
+        RegularFile("a.txt", b""),
+        RegularFile("a.txt", b""),
+    ]
+    data.append(Test(group, description,
+        archive_from_items(items),
+        items=items,
+        maybe_error="extraction",
+    ))
+
+    description = "file name case collision"
+    items = [
+        RegularFile("a.txt", b""),
+        RegularFile("A.TXT", b""),
+    ]
+    data.append(Test(group, description,
+        archive_from_items(items),
+        items=items,
+        maybe_error="extraction",
+    ))
+
+    description = "file name normalization collision"
+    items = [
+        RegularFile("\u00e4.txt", b""),
+        RegularFile("a\u0308.txt", b""),
+    ]
+    data.append(Test(group, description,
+        archive_from_items(items),
+        items=items,
+        maybe_error="extraction",
+    ))
+
+    description = "file name case collision in Turkic locale"
+    items = [
+        RegularFile("i.txt", b""),
+        RegularFile("İ.txt", b""),
+    ]
+    data.append(Test(group, description,
+        archive_from_items(items),
+        items=items,
+        maybe_error="extraction",
+    ))
+
+    description = "file name case collision in non-Turkic locale"
+    items = [
+        RegularFile("i.txt", b""),
+        RegularFile("I.txt", b""),
+    ]
+    data.append(Test(group, description,
+        archive_from_items(items),
+        items=items,
+        maybe_error="extraction",
+    ))
+
+    description = "file name case collision with sigma variants"
+    items = [
+        RegularFile("σ.txt", b""),
+        RegularFile("ς.txt", b""),
+    ]
+    data.append(Test(group, description,
+        archive_from_items(items),
+        items=items,
+        maybe_error="extraction",
+    ))
+
+    description = "ancestor dir is already a file"
+    items = [
+        RegularFile("a", b""),
+        RegularFile("a/b", b""),
+    ]
+    data.append(Test(group, description,
+        archive_from_items(items),
+        items=items,
+        maybe_error="extraction",
+    ))
+
+    description = "ancestor dir is already a symlink"
+    items = [
+        EmptyDirectory("a"),
+        Symlink("b", "a"),
+        RegularFile("b/c", b""),
+    ]
+    data.append(Test(group, description,
+        archive_from_items(items),
+        items=items,
+        maybe_error="extraction",
+    ))
+
+    description = "very long name"
+    items = [
+        RegularFile("a" * 10000, b""),
+    ]
+    data.append(Test(group, description,
+        archive_from_items(items, compress_fn=actually_compress),
+        items=compress_names(items),
+        maybe_error="extraction",
+    ))
+
+    description = "many ancestors"
+    items = [
+        RegularFile("a/" * 5000 + "b", b""),
+    ]
+    data.append(Test(group, description,
+        archive_from_items(items, compress_fn=actually_compress),
+        items=compress_names(items),
+        maybe_error="extraction",
+    ))
+
+
+    ############################################################################
 
     with open("test_data.json", "w") as f:
         json.dump(data, f, indent=2)
         f.write("\n")
 
-def Test(group, description, contents, *, error=None, items=None):
+def Test(group, description, contents, *, items=None, error=None, maybe_error=None):
     if type(contents) == bytes:
         contents = to_sliced_hex(contents)
     else:
@@ -593,58 +772,14 @@ def Test(group, description, contents, *, error=None, items=None):
     }
     if error != None:
         assert error in ("ArchiveHeader", "DataItem", "IndexItem", "ArchiveFooter")
+        assert items == None and maybe_error == None
         test["error"] = error
-    if items != None:
+    elif items != None:
         test["items"] = items
+        if maybe_error != None:
+            test["maybe_error"] = maybe_error
+    else: assert False
     return test
-
-def archive_from_items(items):
-    index_region = fromhex("0000000000000000" "0000000000000000" "00000000" "0500") + b"a.txt"
-
-    def DataItem(item):
-        name = item["name"].encode("utf8")
-        if item["type"] in (0, 1): # regular file, posix executable
-            contents = from_sliced_hex(item["contents"])
-        elif item["type"] == 2: # directory
-            contents = b""
-        elif item["type"] == 3: # symlink
-            contents = item["symlink_target"].encode("utf8")
-        data_item = (
-            fromhex("DCAC") +
-            struct.pack("<H", item["type"] << 14 | len(name)) +
-            name +
-            # Assumes just one chunk.
-            struct.pack("<H", len(contents)) +
-            contents
-        )
-        data_item += crc32(data_item)
-        return data_item
-    data_region = compress(b"".join(DataItem(item) for item in items))
-
-    def IndexItem(item):
-        name = item["name"].encode("utf8")
-        if item["type"] in (0, 1): # regular file, posix executable
-            contents = from_sliced_hex(item["contents"])
-        elif item["type"] == 2: # directory
-            contents = b""
-        elif item["type"] == 3: # symlink
-            contents = item["symlink_target"].encode("utf8")
-        return (
-            fromhex("0000000000000000") +
-            struct.pack("<Q", len(contents)) +
-            crc32(contents) +
-            struct.pack("<H", item["type"] << 14 | len(name)) +
-            name
-        )
-    index_region = b"".join(IndexItem(item) for item in items)
-
-    index_location_buf = struct.pack("<Q", 4 + len(data_region))
-    return (
-        fromhex("BEF6F09F") +
-        data_region +
-        compress(index_region) +
-        crc32(index_region) + index_location_buf + bytes([sum(index_location_buf)]) + fromhex("eee9cf")
-    )
 
 def _file(name, type, contents_bytes, length_encoding=False):
     if length_encoding:
@@ -709,6 +844,61 @@ def from_sliced_hex(a):
 
 def crc32(b):
     return struct.pack("<L", zlib.crc32(b))
+
+def archive_from_items(items, compress_fn=compress):
+    index_region = fromhex("0000000000000000" "0000000000000000" "00000000" "0500") + b"a.txt"
+
+    def DataItem(item):
+        name = item["name"].encode("utf8")
+        if item["type"] in (0, 1): # regular file, posix executable
+            contents = from_sliced_hex(item["contents"])
+        elif item["type"] == 2: # directory
+            contents = b""
+        elif item["type"] == 3: # symlink
+            contents = item["symlink_target"].encode("utf8")
+        data_item = (
+            fromhex("DCAC") +
+            struct.pack("<H", item["type"] << 14 | len(name)) +
+            name +
+            # Assumes just one chunk.
+            struct.pack("<H", len(contents)) +
+            contents
+        )
+        data_item += crc32(data_item)
+        return data_item
+    data_region = compress_fn(b"".join(DataItem(item) for item in items))
+
+    def IndexItem(item):
+        name = item["name"].encode("utf8")
+        if item["type"] in (0, 1): # regular file, posix executable
+            contents = from_sliced_hex(item["contents"])
+        elif item["type"] == 2: # directory
+            contents = b""
+        elif item["type"] == 3: # symlink
+            contents = item["symlink_target"].encode("utf8")
+        return (
+            fromhex("0000000000000000") +
+            struct.pack("<Q", len(contents)) +
+            crc32(contents) +
+            struct.pack("<H", item["type"] << 14 | len(name)) +
+            name
+        )
+    index_region = b"".join(IndexItem(item) for item in items)
+
+    index_location_buf = struct.pack("<Q", 4 + len(data_region))
+    return (
+        fromhex("BEF6F09F") +
+        data_region +
+        compress_fn(index_region) +
+        crc32(index_region) + index_location_buf + bytes([sum(index_location_buf)]) + fromhex("eee9cf")
+    )
+
+def compress_names(items):
+    for item in items:
+        name = item["name"].encode("utf8")
+        del item["name"]
+        item["compressed_name"] = to_sliced_hex(actually_compress(name))
+    return items
 
 if __name__ == "__main__":
     main()

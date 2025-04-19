@@ -6,6 +6,7 @@ import tempfile
 import itertools
 import io
 import json
+import zlib
 
 from read import reader_for_file
 from common import (
@@ -76,7 +77,11 @@ def run_test(test):
         for expected_item, got_item in zip(expected_items, reader, strict=True):
             if not expect_error:
                 expect_equal(expected_item["type"], got_item.file_type)
-                expect_equal(expected_item["name"], got_item.file_name_str)
+                try:
+                    name = expected_item["name"]
+                except KeyError:
+                    name = zlib.decompress(from_sliced_hex(expected_item["compressed_name"]), wbits=-zlib.MAX_WBITS).decode("utf8")
+                expect_equal(name, got_item.file_name_str)
             reader.open_item(got_item)
             if got_item.file_type == FILE_TYPE_DIRECTORY: assert got_item.done
             elif got_item.file_type == FILE_TYPE_SYMLINK:

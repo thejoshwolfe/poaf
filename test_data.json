@@ -88,6 +88,28 @@
     ]
   },
   {
+    "description": "two items",
+    "group": "DataItem",
+    "contents": [
+      "bef6f09f001e00e1ffdcac0500612e747874000067497776dcac0500622e7478",
+      "740000fa539f470300003600c9ff000000000000000000000000000000000000",
+      "00000500612e7478740000000000000000000000000000000000000000050062",
+      "2e747874030000f3eccf290000000000000029eee9cf"
+    ],
+    "items": [
+      {
+        "name": "a.txt",
+        "type": 0,
+        "contents": []
+      },
+      {
+        "name": "b.txt",
+        "type": 0,
+        "contents": []
+      }
+    ]
+  },
+  {
     "description": "invalid streaming_signature",
     "group": "DataItem",
     "contents": [
@@ -230,6 +252,17 @@
     "error": "IndexItem"
   },
   {
+    "description": "items out of order",
+    "group": "IndexItem inconsistent with DataItem",
+    "contents": [
+      "bef6f09f001e00e1ffdcac0500612e747874000067497776dcac0500622e7478",
+      "740000fa539f470300003600c9ff000000000000000000000000000000000000",
+      "00000500622e7478740000000000000000000000000000000000000000050061",
+      "2e74787403006f815341290000000000000029eee9cf"
+    ],
+    "error": "IndexItem"
+  },
+  {
     "description": "stream split",
     "group": "Stream split",
     "contents": [
@@ -311,6 +344,48 @@
     ]
   },
   {
+    "description": "empty dir is a later implicit ancestor",
+    "group": "File Type",
+    "contents": [
+      "bef6f09f001c00e3ffdcac01806100004659fd06dcac0700612f622e74787400",
+      "0062d309d30300003400cbff0000000000000000000000000000000000000000",
+      "01806100000000000000000000000000000000000000000700612f622e747874",
+      "0300d7f18b19270000000000000027eee9cf"
+    ],
+    "items": [
+      {
+        "name": "a",
+        "type": 2
+      },
+      {
+        "name": "a/b.txt",
+        "type": 0,
+        "contents": []
+      }
+    ]
+  },
+  {
+    "description": "empty dir is an earlier implicit ancestor",
+    "group": "File Type",
+    "contents": [
+      "bef6f09f001c00e3ffdcac0700612f622e747874000062d309d3dcac01806100",
+      "004659fd060300003400cbff0000000000000000000000000000000000000000",
+      "0700612f622e7478740000000000000000000000000000000000000000018061",
+      "0300de5e41db270000000000000027eee9cf"
+    ],
+    "items": [
+      {
+        "name": "a/b.txt",
+        "type": 0,
+        "contents": []
+      },
+      {
+        "name": "a",
+        "type": 2
+      }
+    ]
+  },
+  {
     "description": "directories must have 0-length contents",
     "group": "File Type",
     "contents": [
@@ -371,6 +446,22 @@
     "items": [
       {
         "name": "a/b/c.txt",
+        "type": 0,
+        "contents": []
+      }
+    ]
+  },
+  {
+    "description": "file name non-ASCII Unicode",
+    "group": "file_name",
+    "contents": [
+      "bef6f09f001000efffdcac0600c3a42e7478740000d53b505f0300001c00e3ff",
+      "00000000000000000000000000000000000000000600c3a42e74787403007875",
+      "5ff71b000000000000001beee9cf"
+    ],
+    "items": [
+      {
+        "name": "\u00e4.txt",
         "type": 0,
         "contents": []
       }
@@ -1405,5 +1496,234 @@
       "2e62696e030053e98ac5240000000000000024eee9cf"
     ],
     "error": "DataItem"
+  },
+  {
+    "description": "file name collision",
+    "group": "extraction concerns",
+    "contents": [
+      "bef6f09f001e00e1ffdcac0500612e747874000067497776dcac0500612e7478",
+      "740000674977760300003600c9ff000000000000000000000000000000000000",
+      "00000500612e7478740000000000000000000000000000000000000000050061",
+      "2e7478740300d0894c88290000000000000029eee9cf"
+    ],
+    "items": [
+      {
+        "name": "a.txt",
+        "type": 0,
+        "contents": []
+      },
+      {
+        "name": "a.txt",
+        "type": 0,
+        "contents": []
+      }
+    ],
+    "maybe_error": "extraction"
+  },
+  {
+    "description": "file name case collision",
+    "group": "extraction concerns",
+    "contents": [
+      "bef6f09f001e00e1ffdcac0500612e747874000067497776dcac0500412e5458",
+      "54000021b674e00300003600c9ff000000000000000000000000000000000000",
+      "00000500612e7478740000000000000000000000000000000000000000050041",
+      "2e54585403005ee42adf290000000000000029eee9cf"
+    ],
+    "items": [
+      {
+        "name": "a.txt",
+        "type": 0,
+        "contents": []
+      },
+      {
+        "name": "A.TXT",
+        "type": 0,
+        "contents": []
+      }
+    ],
+    "maybe_error": "extraction"
+  },
+  {
+    "description": "file name normalization collision",
+    "group": "extraction concerns",
+    "contents": [
+      "bef6f09f002100deffdcac0600c3a42e7478740000d53b505fdcac070061cc88",
+      "2e7478740000b90886790300003900c6ff000000000000000000000000000000",
+      "00000000000600c3a42e74787400000000000000000000000000000000000000",
+      "00070061cc882e74787403009d6db04e2c000000000000002ceee9cf"
+    ],
+    "items": [
+      {
+        "name": "\u00e4.txt",
+        "type": 0,
+        "contents": []
+      },
+      {
+        "name": "a\u0308.txt",
+        "type": 0,
+        "contents": []
+      }
+    ],
+    "maybe_error": "extraction"
+  },
+  {
+    "description": "file name case collision in Turkic locale",
+    "group": "extraction concerns",
+    "contents": [
+      "bef6f09f001f00e0ffdcac0500692e747874000000079845dcac0600c4b02e74",
+      "78740000118a04c60300003700c8ff0000000000000000000000000000000000",
+      "0000000500692e74787400000000000000000000000000000000000000000600",
+      "c4b02e74787403004d02a3c72a000000000000002aeee9cf"
+    ],
+    "items": [
+      {
+        "name": "i.txt",
+        "type": 0,
+        "contents": []
+      },
+      {
+        "name": "\u0130.txt",
+        "type": 0,
+        "contents": []
+      }
+    ],
+    "maybe_error": "extraction"
+  },
+  {
+    "description": "file name case collision in non-Turkic locale",
+    "group": "extraction concerns",
+    "contents": [
+      "bef6f09f001e00e1ffdcac0500692e747874000000079845dcac0500492e7478",
+      "7400009c3e258a0300003600c9ff000000000000000000000000000000000000",
+      "00000500692e7478740000000000000000000000000000000000000000050049",
+      "2e747874030041d9e99a290000000000000029eee9cf"
+    ],
+    "items": [
+      {
+        "name": "i.txt",
+        "type": 0,
+        "contents": []
+      },
+      {
+        "name": "I.txt",
+        "type": 0,
+        "contents": []
+      }
+    ],
+    "maybe_error": "extraction"
+  },
+  {
+    "description": "file name case collision with sigma variants",
+    "group": "extraction concerns",
+    "contents": [
+      "bef6f09f002000dfffdcac0600cf832e74787400008829e502dcac0600cf822e",
+      "74787400003c2292a40300003800c7ff00000000000000000000000000000000",
+      "000000000600cf832e7478740000000000000000000000000000000000000000",
+      "0600cf822e7478740300d5f9839a2b000000000000002beee9cf"
+    ],
+    "items": [
+      {
+        "name": "\u03c3.txt",
+        "type": 0,
+        "contents": []
+      },
+      {
+        "name": "\u03c2.txt",
+        "type": 0,
+        "contents": []
+      }
+    ],
+    "maybe_error": "extraction"
+  },
+  {
+    "description": "ancestor dir is already a file",
+    "group": "extraction concerns",
+    "contents": [
+      "bef6f09f001800e7ffdcac01006100007defa4ebdcac0300612f62000006b060",
+      "cf0300003000cfff000000000000000000000000000000000000000001006100",
+      "000000000000000000000000000000000000000300612f62030053dc3ae02300",
+      "00000000000023eee9cf"
+    ],
+    "items": [
+      {
+        "name": "a",
+        "type": 0,
+        "contents": []
+      },
+      {
+        "name": "a/b",
+        "type": 0,
+        "contents": []
+      }
+    ],
+    "maybe_error": "extraction"
+  },
+  {
+    "description": "ancestor dir is already a symlink",
+    "group": "extraction concerns",
+    "contents": [
+      "bef6f09f002400dbffdcac01806100004659fd06dcac01c0620100612f3a8a3c",
+      "dcac0300622f630000e1a002890300004700b8ff000000000000000000000000",
+      "00000000000000000180610000000000000000010000000000000043beb7e801",
+      "c06200000000000000000000000000000000000000000300622f630300be02e0",
+      "2d2f000000000000002feee9cf"
+    ],
+    "items": [
+      {
+        "name": "a",
+        "type": 2
+      },
+      {
+        "name": "b",
+        "type": 3,
+        "symlink_target": "a"
+      },
+      {
+        "name": "b/c",
+        "type": 0,
+        "contents": []
+      }
+    ],
+    "maybe_error": "extraction"
+  },
+  {
+    "description": "very long name",
+    "group": "extraction concerns",
+    "contents": [
+      "bef6f09fedc1010900200c00b047b085b92c20bc97099e45cc628fb3ed9e3117",
+      "0000000000000000003410b15fe507edc1811000000804b047c822aefc2502c8",
+      "a0db965cd5030000000000000000000f2c6ac109fb2f000000000000002feee9",
+      "cf"
+    ],
+    "items": [
+      {
+        "type": 0,
+        "contents": [],
+        "compressed_name": [
+          "edc1010d000000c2a0acef5fc21c6e40010000000000000000c0bf01"
+        ]
+      }
+    ],
+    "maybe_error": "extraction"
+  },
+  {
+    "description": "many ancestors",
+    "group": "extraction concerns",
+    "contents": [
+      "bef6f09fedc2b11100100004b05f41af572acdc37c46b288ce1cee72c9d9a5cd",
+      "0e000000000000000000ff5b49ea1d0fedc1310d00300800302ca082739a867f",
+      "1108400149db882deb3f555555555555555555bdbf0733c5488d300000000000",
+      "000030eee9cf"
+    ],
+    "items": [
+      {
+        "type": 0,
+        "contents": [],
+        "compressed_name": [
+          "edc2010900000c03a048cfb4f70fb11c03d15c00000000000000000060de17"
+        ]
+      }
+    ],
+    "maybe_error": "extraction"
   }
 ]
