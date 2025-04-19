@@ -1,0 +1,158 @@
+[
+  {
+    "description": "empty archive",
+    "contents": [
+      "bef6f09f0300030000000000060000000000000006eee9cf"
+    ],
+    "result": []
+  },
+  {
+    "description": "invalid ArchiveHeader",
+    "contents": [
+      "bef6f29e0300030000000000060000000000000006eee9cf"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "invalid footer_signature",
+    "contents": [
+      "bef6f09f0300030000000000060000000000000006eee9ce"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "invalid footer_checksum",
+    "contents": [
+      "bef6f09f0300030000000000060000000000000005eee9cf"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "index_location out of bounds 1",
+    "contents": [
+      "bef6f09f0300030000000000030000000000000003eee9cf"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "index_location out of bounds 2",
+    "contents": [
+      "bef6f09f0300030000000000090000000000000009eee9cf"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "invalid index_crc32",
+    "contents": [
+      "bef6f09f0300030001000000060000000000000006eee9cf"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "padding before ArchiveHeader",
+    "contents": [
+      "00bef6f09f0300030000000000060000000000000006eee9cf"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "padding after ArchiveFooter",
+    "contents": [
+      "bef6f09f0300030000000000060000000000000006eee9cf00"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "single item",
+    "contents": [
+      "bef6f09f000f00f0ffdcac0500612e7478740000674977760300001b00e4ff00",
+      "000000000000000000000000000000000000000500612e7478740300b37d8b4f",
+      "1a000000000000001aeee9cf"
+    ],
+    "result": [
+      {
+        "name": "a.txt",
+        "type": 0,
+        "contents": []
+      }
+    ]
+  },
+  {
+    "description": "invalid streaming_signature",
+    "contents": [
+      "bef6f09f000f00f0ffdca00500612e7478740000e9a94b6c0300001b00e4ff00",
+      "000000000000000000000000000000000000000500612e7478740300b37d8b4f",
+      "1a000000000000001aeee9cf"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "invalid streaming_crc32",
+    "contents": [
+      "bef6f09f000f00f0ffdcac0500612e74787400000a27d9be0300001b00e4ff00",
+      "000000000000000000000000000000000000000500612e7478740300b37d8b4f",
+      "1a000000000000001aeee9cf"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "DataItem/IndexItem file_name conflict",
+    "contents": [
+      "bef6f09f000f00f0ffdcac0500612e7478740000674977760300001b00e4ff00",
+      "000000000000000000000000000000000000000500622e747874030063072b08",
+      "1a000000000000001aeee9cf"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "IndexItem jump_location wrong",
+    "contents": [
+      "bef6f09f000f00f0ffdcac0500612e7478740000674977760300001b00e4ff06",
+      "000000000000000000000000000000000000000500622e7478740300a45a72b4",
+      "1a000000000000001aeee9cf"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "IndexItem file_size wrong",
+    "contents": [
+      "bef6f09f000f00f0ffdcac0500612e7478740000674977760300001b00e4ff00",
+      "000000000000000100000000000000000000000500622e74787403003b87c9df",
+      "1a000000000000001aeee9cf"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "IndexItem contents_crc32 wrong",
+    "contents": [
+      "bef6f09f000f00f0ffdcac0500612e7478740000674977760300001b00e4ff00",
+      "000000000000000000000000000000010000000500622e7478740300a3d8a5c9",
+      "1a000000000000001aeee9cf"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "DataItem/IndexItem file_type conflict",
+    "contents": [
+      "bef6f09f000f00f0ffdcac0500612e7478740000674977760300001b00e4ff00",
+      "000000000000000000000000000000000000000540622e74787403000f0d7307",
+      "1a000000000000001aeee9cf"
+    ],
+    "result": "error"
+  },
+  {
+    "description": "stream split",
+    "contents": [
+      "bef6f09f000900f6ffdcac0500612e7478740300000600f9ff00006749777603",
+      "00001b00e4ff14000000000000000000000000000000000000000500612e7478",
+      "740300a3bdbe70210000000000000021eee9cf"
+    ],
+    "result": [
+      {
+        "name": "a.txt",
+        "type": 0,
+        "contents": []
+      }
+    ]
+  }
+]

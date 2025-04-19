@@ -152,7 +152,7 @@ class StreamingReader(BaseReader):
             self._done_reading_data_region()
             raise StopIteration
 
-        if buf[0:2] != item_signature: raise MalformedInputError("item signature not found")
+        if buf[0:2] != streaming_signature: raise MalformedInputError("streaming_signature not found")
         (type_and_name_size,) = struct.unpack("<H", buf[2:])
         file_type, name_size = type_and_name_size >> 14, type_and_name_size & 0x3FFF
 
@@ -230,10 +230,10 @@ class StreamingReader(BaseReader):
                 name = index_item.file_name_str.encode("utf8")
                 type_and_name_size = (index_item.file_type << 14) | len(name)
                 self._index_tmpfile.write((
-                    struct.pack("<LQQH",
-                        index_item.contents_crc32,
+                    struct.pack("<QQLH",
                         index_item.jump_location,
                         index_item.file_size,
+                        index_item.contents_crc32,
                         type_and_name_size,
                     ) +
                     name
@@ -256,7 +256,7 @@ class StreamingReader(BaseReader):
         unused_data = self._decompressor.unused_data
         unused_data_len = len(unused_data)
         self._decompressor = Decompressor()
-        index_region_location = self._input.tell() - unused_data_len
+        index_location = self._input.tell() - unused_data_len
 
         index_crc32 = 0
         while index_size_remaining > 0:
@@ -285,7 +285,7 @@ class StreamingReader(BaseReader):
         if len(documented_archive_footer) < archive_footer_size: raise MalformedInputError("unexpected EOF")
 
         # Compute what we know the ArchiveFooter should be and compare it all at once.
-        index_region_location_buf = struct.pack("<Q", index_region_location)
+        index_region_location_buf = struct.pack("<Q", index_location)
         footer_checksum = bytes([0xFF & sum(index_region_location_buf)])
         calculated_archive_footer = (
             struct.pack("<L", index_crc32) +
@@ -294,7 +294,7 @@ class StreamingReader(BaseReader):
             footer_signature
         )
 
-        if documented_archive_footer != calculated_archive_footer: raise MalformedInputError("ArchiveFooter is wrong")
+        if documented_archive_footer != calculated_archive_footer: raise MalformedInputError("ArchiveFooter is wrong. expected: " + calculated_archive_footer.hex())
 
         # Everything's good.
 
@@ -318,15 +318,15 @@ class IndexReader(BaseReader):
         # archive_footer
         archive_footer = self._input.read(archive_footer_size)
 
-        self.index_region_location = _validate_archive_footer(archive_footer)
+        self.index_location = _validate_archive_footer(archive_footer)
 
-        if not (data_region_start <= self.index_region_location < self.archive_footer_start): raise MalformedInputError("index_region_location out of bounds")
+        if not (data_region_start <= self.index_location < self.archive_footer_start): raise MalformedInputError("index_location out of bounds")
 
         (self.index_crc32,) = struct.unpack("<L", archive_footer[0:4])
         self._calculated_index_crc32 = 0
 
         # Start the Index Region.
-        self._index_file = FileSlice(self._input, self.index_region_location, self.archive_footer_start)
+        self._index_file = FileSlice(self._input, self.index_location, self.archive_footer_start)
         self._index_decompressor = Decompressor()
 
     def close(self):
@@ -346,11 +346,11 @@ class IndexReader(BaseReader):
             raise StopIteration
 
         (
-            contents_crc32,
             jump_location,
             file_size,
+            contents_crc32,
             type_and_name_size,
-        ) = struct.unpack("<LQQH", buf)
+        ) = struct.unpack("<QQLH", buf)
         file_type, name_size = type_and_name_size >> 14, type_and_name_size & 0x3FFF
         name = self._read_index(name_size)
         file_name_str = _validate_archive_path(name)
@@ -381,7 +381,7 @@ class IndexReader(BaseReader):
 
     def open_item(self, item):
         assert item._contents_file == None, "already open"
-        contents_file = FileSlice(self._input, item._stream_start, self.index_region_location)
+        contents_file = FileSlice(self._input, item._stream_start, self.index_location)
         decompressor = Decompressor()
         skip_bytes = item._skip_bytes_until_contents
         while skip_bytes > 0:
@@ -446,15 +446,15 @@ def _validate_archive_path(name):
     return name_str
 
 def _validate_archive_footer(archive_footer):
-    """ validates footer_checksum and footer_signature and returns index_region_location """
+    """ validates footer_checksum and footer_signature and returns index_location """
     if archive_footer[-3:] != footer_signature: raise MalformedInputError("archive footer signature not found. archive truncated?")
     documented_footer_checksum = archive_footer[-4]
     index_region_location_buf = archive_footer[-12:-4]
     calculated_footer_checksum = 0xFF & sum(index_region_location_buf)
     if documented_footer_checksum != calculated_footer_checksum:
         raise MalformedInputError("footer checksum failed. calculated: {}, documented: {}".format(calculated_footer_checksum, documented_footer_checksum))
-    (index_region_location,) = struct.unpack("<Q", index_region_location_buf)
-    return index_region_location
+    (index_location,) = struct.unpack("<Q", index_region_location_buf)
+    return index_location
 
 def _read_from_decompressor(decompressor, file, decompressed_len, *, allow_eof=False, unused_data_from_previous_stream=None):
     result = b''

@@ -1,7 +1,7 @@
 
-archive_header    = b"\xBE\xF6\xF0\x9F" # 0x9FF0F6BE
-item_signature    = b'\xdc\xac'         # 0xACDC
-footer_signature  = b'\xee\xe9\xcf'     # 0xCFE9EE
+archive_header      = b"\xBE\xF6\xF0\x9F" # 0x9FF0F6BE
+streaming_signature = b'\xdc\xac'         # 0xACDC
+footer_signature    = b'\xee\xe9\xcf'     # 0xCFE9EE
 
 FILE_TYPE_NORMAL_FILE = 0
 FILE_TYPE_POSIX_EXECUTABLE = 1

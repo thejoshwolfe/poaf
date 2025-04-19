@@ -11,10 +11,16 @@ import subprocess
 import tempfile
 import itertools
 import io
+import json
 
 from read import reader_for_file
-from common import PoafException
-from test_data import data as test_data
+from common import (
+    PoafException,
+    FILE_TYPE_NORMAL_FILE,
+    FILE_TYPE_POSIX_EXECUTABLE,
+    FILE_TYPE_DIRECTORY,
+    FILE_TYPE_SYMLINK,
+)
 
 def main():
     import argparse
@@ -25,18 +31,24 @@ def main():
     test_permutations()
 
 def test_from_data():
+    with open("test_data.json") as f:
+        test_data = json.load(f)
     for test in test_data:
         print(test["description"] + "...", end="", flush=True)
         run_test(test)
         print("pass")
 
+def from_sliced_hex(a):
+    return b"".join(bytes.fromhex(x) for x in a)
+
 def run_test(test):
-    contents = io.BytesIO(bytes.fromhex(test["contents"]["hex"]))
+    contents = io.BytesIO(from_sliced_hex(test["contents"]))
 
     expect_error = False
     expected_items = []
     if test["result"] == "error":
         expect_error = True
+        expected_items = itertools.repeat(None)
     elif type(test["result"]) == list:
         expected_items = test["result"]
     else: assert False
@@ -44,11 +56,28 @@ def run_test(test):
     try:
         reader = reader_for_file(contents, prefer_index=False)
         for expected_item, got_item in zip(expected_items, reader, strict=True):
-            raise NotImplementedError
+            if not expect_error:
+                expect_equal(expected_item["type"], got_item.file_type)
+                expect_equal(expected_item["name"], got_item.file_name_str)
+            reader.open_item(got_item)
+            if got_item.file_type == FILE_TYPE_DIRECTORY: assert got_item.done
+            elif got_item.file_type == FILE_TYPE_SYMLINK:
+                if not expect_error:
+                    expect_equal(expected_item["symlink_target"], got_item.symlink_target)
+            else:
+                buf = io.BytesIO()
+                while not got_item.done:
+                    buf.write(reader.read_from_item(got_item))
+                if not expect_error:
+                    expect_equal(from_sliced_hex(expected_item["contents"]), buf.getvalue())
     except PoafException as e:
         if not expect_error: raise
     else:
         assert not expect_error
+
+def expect_equal(expected, got):
+    if expected == got: return
+    raise Exception("expected: " + repr(expected) + ", got: " + repr(got))
 
 def test_permutations():
     file_name_args = [

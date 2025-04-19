@@ -103,7 +103,7 @@ class Writer:
 
         # Write DataItem pre-contents fields.
         out_buf = (
-            item_signature +
+            streaming_signature +
             struct.pack("<H", type_and_name_size) +
             name
         )
@@ -162,10 +162,10 @@ class Writer:
 
         # IndexItem
         out_buf = (
-            struct.pack("<LQQH",
-                contents_crc32,
+            struct.pack("<QQLH",
                 jump_location,
                 file_size,
+                contents_crc32,
                 type_and_name_size,
             ) +
             name
@@ -179,7 +179,7 @@ class Writer:
         self._compressor = None
 
         # Index Region.
-        index_region_location = self._output.tell()
+        index_location = self._output.tell()
         self._index_tmpfile.write(self._index_compressor.flush())
         self._index_compressor = None
         self._index_tmpfile.seek(0)
@@ -188,7 +188,7 @@ class Writer:
         self._index_tmpfile = None
 
         # ArchiveFooter.
-        index_region_location_buf = struct.pack("<Q", index_region_location)
+        index_region_location_buf = struct.pack("<Q", index_location)
         footer_checksum = bytes([0xFF & sum(index_region_location_buf)])
         self._output.write(
             struct.pack("<L", self._index_crc32) +

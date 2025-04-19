@@ -314,7 +314,7 @@ The `ArchiveFooter` is the following struct:
 ```
 struct ArchiveFooter = {
     index_crc32:            4 bytes
-    index_region_location:  8 bytes
+    index_location:         8 bytes
     footer_checksum:        1 byte
     footer_signature:       3 bytes  // Always 0xCFE9EE i.e. 0xEE 0xE9 0xCF
 }
@@ -325,11 +325,11 @@ There is never overlap between the `ArchiveFooter` and `ArchiveHeader`,
 which means that the offset of the `ArchiveFooter` is always at least 4.
 Readers are encouraged to verify `footer_signature` to guard against corruption due to archive truncation.
 
-`footer_checksum` is the lower 8 bits of the sum of each individual byte of `index_region_location`.
-For example if `index_region_location` is `123456`, then `footer_checksum` is `35`.
+`footer_checksum` is the lower 8 bits of the sum of each individual byte of `index_location`.
+For example if `index_location` is `123456`, then `footer_checksum` is `35`.
 
-`index_region_location` is the offset in the archive of the start of the compression stream that contains the Index Region.
-`index_region_location` is always at least 4 and always less than the offset of the `ArchiveFooter`.
+`index_location` is the offset in the archive of the start of the compression stream that contains the Index Region.
+`index_location` is always at least 4 and always less than the offset of the `ArchiveFooter`.
 
 `index_crc32` is the CRC32 of the entire Index Region, after decompression.
 
