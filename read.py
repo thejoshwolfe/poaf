@@ -18,6 +18,9 @@ def main():
         "When attempting to list the index or extract an explicit selection of items, "
         "fail if the archive does not include an index. "
         "The default behavior is to fallback to streaming the whole archive.")
+    parser.add_argument("--no-validate-index", action="store_true", help=
+        "Normally when extracting all items, the index will be validated to guard against ambiguous archives. "
+        "Passing this option stops reading the archive after the Data Region.")
     parser.add_argument("items", nargs="*", help=
         "If specified, only extracts the given items.")
     args = parser.parse_args()
@@ -28,7 +31,7 @@ def main():
 
     specific_items = set(args.items)
     found_items = set()
-    with open_path(args.archive, prefer_index, args.no_streaming_fallback) as reader:
+    with open_path(args.archive, prefer_index, args.no_streaming_fallback, not args.no_validate_index) as reader:
         for item in reader:
             if len(specific_items) == 0:
                 # Handle every item.
@@ -88,14 +91,14 @@ def extract_item(dir, reader, item):
             mode |= (mode & 0o444) >> 2
             os.chmod(file_name_path, mode)
 
-def open_path(archive_path, prefer_index=True, require_index=False):
+def open_path(archive_path, prefer_index=True, require_index=False, validate_index=True):
     file = open(archive_path, "rb")
     try:
-        return reader_for_file(file, prefer_index, require_index)
+        return reader_for_file(file, prefer_index, require_index, validate_index)
     except:
         file.close()
         raise
-def reader_for_file(file, prefer_index=True, require_index=False):
+def reader_for_file(file, prefer_index=True, require_index=False, validate_index=True):
     if not prefer_index: require_index = False
     # ArchiveHeader
     if file.read(4) != archive_header: raise MalformedInputError("not a poaf archive")
@@ -107,7 +110,7 @@ def reader_for_file(file, prefer_index=True, require_index=False):
     if prefer_index and seekable:
         return IndexReader(file)
     else:
-        return StreamingReader(file)
+        return StreamingReader(file, validate_index=validate_index)
 
 default_chunk_size = 0x4000
 
@@ -269,7 +272,7 @@ class StreamingReader(BaseReader):
             assert len(calculated_buf) == size, "tmpfile modified mid-operation?"
             assert len(found_buf) == size, "allow_eof=False makes this impossible to fail"
             if calculated_buf != found_buf:
-                raise MalformedInputError("verifying index failed")
+                raise MalformedInputError("validating index failed")
             index_crc32 = zlib.crc32(calculated_buf, index_crc32)
 
         # Make sure we're at the end of the compression stream.

@@ -152,6 +152,46 @@ def main():
         [RegularFile("a.txt", b"")],
     ))
 
+    data_region = (
+        compress(fromhex("DCAC" "0500") + b"a.txt") +
+        # This is the true start of the compression stream.
+        b"\x00\x00\x00\xff\xff" +
+        # This is a decoy.
+        compress(fromhex("0000") + crc32(
+            fromhex("DCAC" "0500") + b"a.txt" +
+            fromhex("0000")
+        ))
+    )
+    index_region = fromhex("1400000000000000" "0000000000000000" "00000000" "0500") + b"a.txt"
+    data.append(Test("stream split ambiguous start correct",
+        fromhex("BEF6F09F") +
+        data_region +
+        compress(index_region) +
+        crc32(index_region) + fromhex("2600000000000000" "26" "eee9cf"),
+        [RegularFile("a.txt", b"")],
+    ))
+
+    data_region = (
+        compress(fromhex("DCAC" "0500") + b"a.txt") +
+        # This is the true start of the compression stream.
+        b"\x00\x00\x00\xff\xff" +
+        # The IndexItem says to start here, which will give you the correct contents.
+        # Simply trying to decompress and catching problems is insufficient for catching the problem with this test case.
+        # A reader might need to predict exactly what the index will contain by scanning through the data region first.
+        compress(fromhex("0000") + crc32(
+            fromhex("DCAC" "0500") + b"a.txt" +
+            fromhex("0000")
+        ))
+    )
+    index_region = fromhex("1900000000000000" "0000000000000000" "00000000" "0500") + b"a.txt"
+    data.append(Test("stream split ambiguous start incorrect",
+        fromhex("BEF6F09F") +
+        data_region +
+        compress(index_region) +
+        crc32(index_region) + fromhex("2600000000000000" "26" "eee9cf"),
+        "error",
+    ))
+
 
     with open("test_data.json", "w") as f:
         json.dump(data, f, indent=2)

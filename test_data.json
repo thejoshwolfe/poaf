@@ -154,5 +154,29 @@
         "contents": []
       }
     ]
+  },
+  {
+    "description": "stream split ambiguous start correct",
+    "contents": [
+      "bef6f09f000900f6ffdcac0500612e7478740300000000ffff000600f9ff0000",
+      "674977760300001b00e4ff140000000000000000000000000000000000000005",
+      "00612e7478740300a3bdbe70260000000000000026eee9cf"
+    ],
+    "result": [
+      {
+        "name": "a.txt",
+        "type": 0,
+        "contents": []
+      }
+    ]
+  },
+  {
+    "description": "stream split ambiguous start incorrect",
+    "contents": [
+      "bef6f09f000900f6ffdcac0500612e7478740300000000ffff000600f9ff0000",
+      "674977760300001b00e4ff190000000000000000000000000000000000000005",
+      "00612e74787403002d1bf1bd260000000000000026eee9cf"
+    ],
+    "result": "error"
   }
 ]
