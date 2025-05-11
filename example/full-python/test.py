@@ -18,8 +18,8 @@ from common import (
 )
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
-repo_dir = os.path.dirname(this_dir)
-test_dir = os.path.join(repo_dir, "tests")
+repo_dir = os.path.dirname(os.path.dirname(this_dir))
+test_dir = os.path.join(repo_dir, "test")
 
 def main():
     import argparse
