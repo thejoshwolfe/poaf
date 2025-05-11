@@ -158,8 +158,8 @@ There are 4 regions to an archive:
 
 1. `ArchiveHeader`: 4 bytes, not compressed
 2. Data Region: Compressed in one or more streams, optionally includes streaming metadata
-3. (optional) Index Region: Compressed separately in one stream
-4. (optional) `ArchiveFooter`: 16 bytes, not compressed
+3. Index Region: Compressed separately in one stream
+4. `ArchiveFooter`: 16 bytes, not compressed
 
 An archive can be read starting with the `ArchiveHeader`, then reading through just the Data Region.
 Or an archive can be read by starting with the `ArchiveHeader`, then jumping to the `ArchiveFooter`,
@@ -178,7 +178,7 @@ Any deviation from such a prediction would be a violation of the spec.
 
 #### `ArchiveHeader`
 
-The `ArchiveHeader` is the following structure:
+The `ArchiveHeader` is the following 4-byte structure:
 
 ```
 struct ArchiveHeader = {
@@ -309,7 +309,7 @@ If the archive contains no items, the Index Region is a compression stream that 
 
 #### `ArchiveFooter`
 
-The `ArchiveFooter` is the following struct:
+The `ArchiveFooter` is the following 16-byte struct:
 
 ```
 struct ArchiveFooter = {
@@ -322,14 +322,15 @@ struct ArchiveFooter = {
 
 The archive file must end at the end of the `ArchiveFooter`.
 There is never overlap between the `ArchiveFooter` and `ArchiveHeader`,
-which means that the offset of the `ArchiveFooter` is always at least 4.
+and because the minimum size of each of the two compressed streams for the Data Region and Index Region are 2,
+this means that the offset of the `ArchiveFooter` is always at least 8, and the total size of an archive is always at least 24.
 Readers are encouraged to verify `footer_signature` to guard against corruption due to archive truncation.
 
 `footer_checksum` is the lower 8 bits of the sum of each individual byte of `index_location`.
 For example if `index_location` is `123456`, then `footer_checksum` is `35`.
 
 `index_location` is the offset in the archive of the start of the compression stream that contains the Index Region.
-`index_location` is always at least 4 and always less than the offset of the `ArchiveFooter`.
+`index_location` is always at least 6 and always less than the offset of the `ArchiveFooter`.
 
 `index_crc32` is the CRC32 of the entire Index Region, after decompression.
 

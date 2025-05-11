@@ -99,7 +99,7 @@ def run_test(test):
                     try:
                         expected_contents = from_sliced_hex(expected_item["contents"])
                     except KeyError:
-                        expected_contents = b"\x00" * expected_item["contents_length"]
+                        expected_contents = zlib.decompress(from_sliced_hex(expected_item["compressed_contents"]), wbits=-zlib.MAX_WBITS)
                     expect_equal(expected_contents, buf.getvalue())
     except PoafException as e:
         if not expect_error: raise

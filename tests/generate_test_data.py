@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 
+# TODO:
+# * Index Region compression stream overlaps ArchiveFooter.
+# * Data Region compression stream split on second chunk.
+# * Data Region compression stream split on directory empty contents.
+# * Data Region compression stream split on symlink target.
+
 import json
 import zlib
 import struct
