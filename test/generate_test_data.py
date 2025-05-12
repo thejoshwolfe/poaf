@@ -162,7 +162,7 @@ def main():
         data_region +
         compress(index_region) +
         crc32(index_region) + index_location_buf + bytes([sum(index_location_buf)]) + fromhex("eee9cf"),
-        items=[RegularFile("a.bin", contents, length_encoding=True)],
+        items=[RegularFile("a.bin", contents)],
     ))
 
     description = "contents exactly a single chunk"
@@ -182,7 +182,7 @@ def main():
         data_region +
         compress(index_region) +
         crc32(index_region) + index_location_buf + bytes([sum(index_location_buf)]) + fromhex("eee9cf"),
-        items=[RegularFile("a.bin", contents, length_encoding=True)],
+        items=[RegularFile("a.bin", contents)],
     ))
 
 
@@ -191,21 +191,19 @@ def main():
     ############################################################################
 
     description = "DataItem/IndexItem file_name conflict"
-    data_item = fromhex("DCAC" "0500") + b"a.txt" + fromhex("0000")
-    data_item += crc32(data_item)
-    index_region = fromhex("0000000000000000" "0000000000000000" "00000000" "0500") + b"b.txt"
     data.append(Test(group, description,
-        fromhex("BEF6F09F") +
-        compress(data_item) +
-        compress(index_region) +
-        crc32(index_region) + fromhex("1a00000000000000" "1a" "eee9cf"),
+        archive_from_items([
+            RegularFile("a.txt", b""),
+        ], index_items=[
+            RegularFile("b.txt", b""),
+        ]),
         error="IndexItem",
     ))
 
     description = "IndexItem jump_location wrong"
     data_item = fromhex("DCAC" "0500") + b"a.txt" + fromhex("0000")
     data_item += crc32(data_item)
-    index_region = fromhex("0600000000000000" "0000000000000000" "00000000" "0500") + b"b.txt"
+    index_region = fromhex("0600000000000000" "0000000000000000" "00000000" "0500") + b"a.txt"
     data.append(Test(group, description,
         fromhex("BEF6F09F") +
         compress(data_item) +
@@ -217,7 +215,7 @@ def main():
     description = "IndexItem file_size wrong"
     data_item = fromhex("DCAC" "0500") + b"a.txt" + fromhex("0000")
     data_item += crc32(data_item)
-    index_region = fromhex("0000000000000000" "0100000000000000" "00000000" "0500") + b"b.txt"
+    index_region = fromhex("0000000000000000" "0100000000000000" "00000000" "0500") + b"a.txt"
     data.append(Test(group, description,
         fromhex("BEF6F09F") +
         compress(data_item) +
@@ -227,43 +225,34 @@ def main():
     ))
 
     description = "IndexItem contents_crc32 wrong"
-    data_item = fromhex("DCAC" "0500") + b"a.txt" + fromhex("0000")
-    data_item += crc32(data_item)
-    index_region = fromhex("0000000000000000" "0000000000000000" "01000000" "0500") + b"b.txt"
     data.append(Test(group, description,
-        fromhex("BEF6F09F") +
-        compress(data_item) +
-        compress(index_region) +
-        crc32(index_region) + fromhex("1a00000000000000" "1a" "eee9cf"),
+        archive_from_items([
+            RegularFile("a.txt", b"X"),
+        ], index_items=[
+            RegularFile("a.txt", b"Y"),
+        ]),
         error="IndexItem",
     ))
 
     description = "DataItem/IndexItem file_type conflict"
-    data_item = fromhex("DCAC" "0500") + b"a.txt" + fromhex("0000")
-    data_item += crc32(data_item)
-    index_region = fromhex("0000000000000000" "0000000000000000" "00000000" "0540") + b"b.txt"
     data.append(Test(group, description,
-        fromhex("BEF6F09F") +
-        compress(data_item) +
-        compress(index_region) +
-        crc32(index_region) + fromhex("1a00000000000000" "1a" "eee9cf"),
+        archive_from_items([
+            RegularFile("a.txt", b""),
+        ], index_items=[
+            PosixExecutable("a.txt", b""),
+        ]),
         error="IndexItem",
     ))
 
     description = "items out of order"
-    data_item = fromhex("DCAC" "0500") + b"a.txt" + fromhex("0000")
-    data_item += crc32(data_item)
-    data_item2 = fromhex("DCAC" "0500") + b"b.txt" + fromhex("0000")
-    data_item2 += crc32(data_item2)
-    index_region = (
-        fromhex("0000000000000000" "0000000000000000" "00000000" "0500") + b"b.txt" +
-        fromhex("0000000000000000" "0000000000000000" "00000000" "0500") + b"a.txt"
-    )
     data.append(Test(group, description,
-        fromhex("BEF6F09F") +
-        compress(data_item + data_item2) +
-        compress(index_region) +
-        crc32(index_region) + fromhex("2900000000000000" "29" "eee9cf"),
+        archive_from_items([
+            RegularFile("a.txt", b""),
+            RegularFile("b.txt", b""),
+        ], index_items=[
+            RegularFile("b.txt", b""),
+            RegularFile("a.txt", b""),
+        ]),
         error="IndexItem",
     ))
 
@@ -438,7 +427,7 @@ def main():
         data_region +
         compress(index_region) +
         crc32(index_region) + index_location_buf + bytes([sum(index_location_buf)]) + fromhex("eee9cf"),
-        items=[PosixExecutable("a.bin", contents, length_encoding=True)],
+        items=[PosixExecutable("a.bin", contents)],
     ))
 
 
@@ -787,13 +776,12 @@ def Test(group, description, contents, *, items=None, error=None, maybe_error=No
     else: assert False
     return test
 
-def _file(name, type, contents_bytes, length_encoding=False):
-    if length_encoding:
-        assert contents_bytes == b"\x00" * len(contents_bytes)
+def _file(name, type, contents_bytes):
+    if len(contents_bytes) >= 512:
         return {
             "name": name,
             "type": type,
-            "contents_length": len(contents_bytes),
+            "compressed_contents": to_sliced_hex(actually_compress(contents_bytes)),
         }
     else:
         return {
@@ -801,10 +789,10 @@ def _file(name, type, contents_bytes, length_encoding=False):
             "type": type,
             "contents": to_sliced_hex(contents_bytes),
         }
-def RegularFile(name, contents_bytes, length_encoding=False):
-    return _file(name, 0, contents_bytes, length_encoding)
-def PosixExecutable(name, contents_bytes, length_encoding=False):
-    return _file(name, 1, contents_bytes, length_encoding)
+def RegularFile(name, contents_bytes):
+    return _file(name, 0, contents_bytes)
+def PosixExecutable(name, contents_bytes):
+    return _file(name, 1, contents_bytes)
 def EmptyDirectory(name):
     return {
         "name": name,
@@ -851,9 +839,9 @@ def from_sliced_hex(a):
 def crc32(b):
     return struct.pack("<L", zlib.crc32(b))
 
-def archive_from_items(items, compress_fn=compress):
-    index_region = fromhex("0000000000000000" "0000000000000000" "00000000" "0500") + b"a.txt"
-
+def archive_from_items(items, *, index_items=None, compress_fn=compress):
+    if index_items == None:
+        index_items = items
     def DataItem(item):
         name = item["name"].encode("utf8")
         if item["type"] in (0, 1): # regular file, posix executable
@@ -889,7 +877,7 @@ def archive_from_items(items, compress_fn=compress):
             struct.pack("<H", item["type"] << 14 | len(name)) +
             name
         )
-    index_region = b"".join(IndexItem(item) for item in items)
+    index_region = b"".join(IndexItem(item) for item in index_items)
 
     index_location_buf = struct.pack("<Q", 4 + len(data_region))
     return (
