@@ -5,7 +5,7 @@ import tempfile, shutil
 import io, struct
 import zlib
 
-from common import validate_file_name
+from common import validate_file_name, validate_symlink_target
 
 def Compressor():
     return zlib.compressobj(wbits=-zlib.MAX_WBITS)
@@ -64,7 +64,7 @@ def main():
                 data_item_buf.write(b"\x00\x00") # chunk_size
             else: # symlink
                 symlink_target = os.readlink(file).encode("utf8")
-                validate_symlink_target(file_file, symlink_target)
+                validate_symlink_target(file_name, symlink_target)
                 data_item_buf.write(struct.pack("<H", len(symlink_target))) # chunk_size
                 data_item_buf.write(symlink_target) # chunk
                 contents_crc = zlib.crc32(chunk)

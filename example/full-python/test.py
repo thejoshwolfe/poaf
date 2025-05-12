@@ -30,9 +30,26 @@ def main():
     test_from_data(args.verbose)
     test_create()
 
+def canonicalize_test_data(test_data):
+    for test_case in test_data:
+        test_case["contents"] = from_sliced_hex(test_case["contents"])
+        for item in test_case.get("items", []):
+            if "compressed_name" in item:
+                item["name"] = zlib.decompress(from_sliced_hex(item["compressed_name"]), wbits=-zlib.MAX_WBITS).decode("utf8")
+                del item["compressed_name"]
+            if "compressed_contents" in item:
+                item["contents"] = zlib.decompress(from_sliced_hex(item["compressed_contents"]), wbits=-zlib.MAX_WBITS)
+                del item["compressed_contents"]
+            elif "contents" in item:
+                item["contents"] = from_sliced_hex(item["contents"])
+
+def from_sliced_hex(a):
+    return b"".join(bytes.fromhex(x) for x in a)
+
 def test_from_data(verbose):
     with open(os.path.join(test_dir, "test_data.json")) as f:
         test_data = json.load(f)
+    canonicalize_test_data(test_data)
 
     current_group = None
     current_group_count = None
@@ -61,11 +78,8 @@ def test_from_data(verbose):
     if not verbose:
         print("{0}/{0} pass".format(current_group_count))
 
-def from_sliced_hex(a):
-    return b"".join(bytes.fromhex(x) for x in a)
-
 def run_test(test):
-    contents = io.BytesIO(from_sliced_hex(test["contents"]))
+    contents = io.BytesIO(test["contents"])
 
     expect_error = False
     expected_items = []
@@ -81,11 +95,7 @@ def run_test(test):
         for expected_item, got_item in zip(expected_items, reader, strict=True):
             if not expect_error:
                 expect_equal(expected_item["type"], got_item.file_type)
-                try:
-                    name = expected_item["name"]
-                except KeyError:
-                    name = zlib.decompress(from_sliced_hex(expected_item["compressed_name"]), wbits=-zlib.MAX_WBITS).decode("utf8")
-                expect_equal(name, got_item.file_name_str)
+                expect_equal(expected_item["name"], got_item.file_name_str)
             reader.open_item(got_item)
             if got_item.file_type == FILE_TYPE_DIRECTORY: assert got_item.done
             elif got_item.file_type == FILE_TYPE_SYMLINK:
@@ -96,11 +106,7 @@ def run_test(test):
                 while not got_item.done:
                     buf.write(reader.read_from_item(got_item))
                 if not expect_error:
-                    try:
-                        expected_contents = from_sliced_hex(expected_item["contents"])
-                    except KeyError:
-                        expected_contents = zlib.decompress(from_sliced_hex(expected_item["compressed_contents"]), wbits=-zlib.MAX_WBITS)
-                    expect_equal(expected_contents, buf.getvalue())
+                    expect_equal(expected_item["contents"], buf.getvalue())
     except PoafException as e:
         if not expect_error: raise
     else:

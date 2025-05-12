@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
-import sys, os
+import sys, os, stat
 import struct
 import zlib
 
-from common import validate_file_name
+from common import validate_file_name, validate_symlink_target
 
 def main():
     import argparse
@@ -40,7 +40,6 @@ def main():
             file_type = type_and_name_size >> 14
             file_name_bytes = readFromDecompressor(type_and_name_size & 0x3fff)
             validate_file_name(file_name_bytes)
-            dest_path = os.path.join(root, file_name_bytes.decode("utf8"))
 
             streaming_crc32 = zlib.crc32(streaming_signature_buf + type_and_name_size_buf + file_name_bytes)
 
@@ -57,8 +56,14 @@ def main():
             chunk = readFromDecompressor(chunk_size)
             streaming_crc32 = zlib.crc32(chunk_size_buf + chunk, streaming_crc32)
 
+            # Ensure implicit ancestors exist and are not symlinks.
+            segments = file_name_bytes.decode("utf8").split("/")
+            for i in range(1, len(segments)):
+                ancestor = os.path.join(root, *segments[:i])
+                ensure_is_dir(ancestor)
+            dest_path = os.path.join(root, *segments)
+
             if file_type in (0, 1): # regular file, posix executable
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
                 with open(dest_path, "xb") as f:
                     while True:
                         f.write(chunk)
@@ -74,11 +79,11 @@ def main():
                     mode |= (mode & 0o444) >> 2
                     os.chmod(dest_path, mode)
             elif file_type == 2: # directory
-                os.makedirs(dest_path, exist_ok=True)
+                ensure_is_dir(dest_path)
                 if chunk_size != 0: raise Exception("directories must have empty contents")
             else: # symlink
                 symlink_target_bytes = chunk
-                validate_symlink_target(symlink_target_bytes, file_name_bytes)
+                validate_symlink_target(file_name_bytes, symlink_target_bytes)
                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
                 os.symlink(symlink_target_bytes.decode("utf8"), dest_path)
 
@@ -92,6 +97,14 @@ def main():
 
         # Now decompressor.unused_data contains the Index Region and the ArchiveFooter,
         # but we ignore those and exit early.
+
+def ensure_is_dir(path):
+    try:
+        if stat.S_ISDIR(os.stat(path, follow_symlinks=False).st_mode):
+            return
+    except FileNotFoundError:
+        pass
+    os.mkdir(path)
 
 if __name__ == "__main__":
     main()

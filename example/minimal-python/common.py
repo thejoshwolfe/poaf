@@ -25,7 +25,7 @@ def validate_file_name(file_name_bytes, its_a_symlink_target_and_this_is_the_fil
         depth = len(its_a_symlink_target_and_this_is_the_file_name.split(b"/")) - 1
         # A segment may be `..` only if every prior segment, if any, is also `..`,
         # and the total number of `..` segments does not exceed `depth`.
-        up_prefix_match = re.match(rb'^(\.\./)*', file_name_bytes)
+        up_prefix_match = re.match(rb'^(\.\./)*', file_name_bytes + b"/")
         up_prefix_count = len(up_prefix_match.group()) // 3
         if up_prefix_count > depth: raise Exception("symlink target escapes archive")
         file_name_bytes_after_up_prefix = file_name_bytes[up_prefix_match.span()[1]:]
