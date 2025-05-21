@@ -7,9 +7,6 @@ import zlib
 
 from common import validate_file_name, validate_symlink_target
 
-def Compressor():
-    return zlib.compressobj(wbits=-zlib.MAX_WBITS)
-
 def main():
     import argparse
     parser = argparse.ArgumentParser()
@@ -17,7 +14,7 @@ def main():
     parser.add_argument("files", nargs="*", help="input files")
     args = parser.parse_args()
 
-    with open(args.output, "wb") as out, tempfile.SpooledTemporaryFile(prefix="poaf.index.") as index_file:
+    with open(args.output, "wb") as out, tempfile.SpooledTemporaryFile(prefix="poaf.index.", max_size=0x10000) as index_file:
         data_compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)
         index_compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)
         index_crc32 = 0
