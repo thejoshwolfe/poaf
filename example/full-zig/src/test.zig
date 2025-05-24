@@ -75,7 +75,7 @@ test "test data" {
             }
         } else |err| {
             if (!expect_error) {
-                std.log.err("{s}: {s}:", .{ test_case.group, test_case.description });
+                std.log.err("{s}: {s}: {s}", .{ test_case.group, test_case.description, @errorName(err) });
                 return err; // This error was not expected.
             }
         }
@@ -83,23 +83,70 @@ test "test data" {
 }
 
 fn testOneCaseAllModes(test_case: *const TestCase) !void {
-    try testOneCase(.stream, test_case);
-    try testOneCase(.stream_no_verify, test_case);
-    try testOneCase(.index_or_stream_fallback, test_case);
-    try testOneCase(.index_or_error, test_case);
+    try testOneCaseStream(test_case);
+    try testOneCaseIndex(test_case);
 }
-fn testOneCase(comptime mode: poaf.Mode, test_case: *const TestCase) !void {
+fn testOneCaseStream(test_case: *const TestCase) !void {
     var arena = ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     var fbs = std.io.fixedBufferStream(test_case.contents.bytes);
-    var archive = poaf.archive(mode, &fbs);
+    var brs = std.io.bufferedReaderSize(poaf.buffer_size, fbs.reader().any());
+    var archive = poaf.StreamReader{ .stream = &brs };
     try archive.init();
     var item_index: usize = 0;
     while (try archive.next()) |found_item| : (item_index += 1) {
         if (test_case.items == null) {
             // Going to be an error later.
             try archive.skipItem();
+            continue;
+        }
+        if (item_index >= test_case.items.?.len) return error.TestFailed; // found too many items.
+        const expected_item = test_case.items.?[item_index];
+
+        // file_type, file_name
+        try testing.expectEqual(expected_item.type, @intFromEnum(found_item.file_type));
+        if (expected_item.name) |n| {
+            try testing.expectEqualStrings(n, found_item.file_name);
+        } else if (expected_item.compressed_name) |compressed_name| {
+            try testing.expectEqualStrings(decompress(arena.allocator(), compressed_name.bytes), found_item.file_name);
+        } else unreachable;
+
+        // contents
+        var contents_buf = ArrayList(u8).init(arena.allocator());
+        while (0 < try archive.readItemContents(contents_buf.writer())) {}
+        const found_contents = try contents_buf.toOwnedSlice();
+
+        if (found_item.file_type == .symlink) {
+            try testing.expectEqualStrings(expected_item.symlink_target.?, found_contents);
+        } else if (expected_item.contents) |c| {
+            try testing.expectEqualStrings(c.bytes, found_contents);
+        } else if (expected_item.compressed_contents) |cc| {
+            try testing.expectEqualStrings(decompress(arena.allocator(), cc.bytes), found_contents);
+        } else unreachable;
+    }
+    if (test_case.items != null and item_index < test_case.items.?.len) return error.TestFailed; // not enough items.
+}
+
+fn testOneCaseIndex(test_case: *const TestCase) !void {
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const file = try tmp.dir.createFile("archive.poaf", .{ .read = true, .exclusive = true });
+    defer file.close();
+
+    try file.writer().writeAll(test_case.contents.bytes);
+    try file.seekTo(0);
+
+    var archive = poaf.IndexReader{ .file = file };
+    try archive.init();
+    var item_index: usize = 0;
+    while (try archive.next()) |found_item| : (item_index += 1) {
+        if (test_case.items == null) {
+            // Going to be an error later.
             continue;
         }
         if (item_index >= test_case.items.?.len) return error.TestFailed; // found too many items.
