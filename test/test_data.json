@@ -210,7 +210,7 @@
     ]
   },
   {
-    "description": "DataItem/IndexItem file_name conflict",
+    "description": "DataItem,IndexItem file_name conflict",
     "group": "IndexItem inconsistent with DataItem",
     "contents": [
       "bef6f09f000f00f0ffdcac0500612e7478740000674977760300001b00e4ff00",
@@ -250,7 +250,7 @@
     "error": "IndexItem"
   },
   {
-    "description": "DataItem/IndexItem file_type conflict",
+    "description": "DataItem,IndexItem file_type conflict",
     "group": "IndexItem inconsistent with DataItem",
     "contents": [
       "bef6f09f000f00f0ffdcac0500612e7478740000674977760300001b00e4ff00",
@@ -510,7 +510,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '//'",
+    "description": "file name contains slashslash",
     "group": "file_name",
     "contents": [
       "bef6f09f001200edffdcac0800612f2f632e74787400007a0376e50300001e00",
@@ -520,7 +520,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name starts with '/'",
+    "description": "file name starts with slash",
     "group": "file_name",
     "contents": [
       "bef6f09f001000efffdcac06002f632e7478740000feaa95820300001c00e3ff",
@@ -540,7 +540,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\'",
+    "description": "file name contains backslash",
     "group": "file_name",
     "contents": [
       "bef6f09f001300ecffdcac0900615c625c632e74787400002eeef8850300001f",
@@ -550,7 +550,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x00'",
+    "description": "file name contains %00",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006100632e74787400002ca828550300001d00e2",
@@ -560,7 +560,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x01'",
+    "description": "file name contains %01",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006101632e7478740000b2a882990300001d00e2",
@@ -570,7 +570,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x02'",
+    "description": "file name contains %02",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006102632e747874000051af0d170300001d00e2",
@@ -580,7 +580,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x03'",
+    "description": "file name contains %03",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006103632e7478740000cfafa7db0300001d00e2",
@@ -590,7 +590,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x04'",
+    "description": "file name contains %04",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006104632e7478740000d6a662d10300001d00e2",
@@ -600,7 +600,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x05'",
+    "description": "file name contains %05",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006105632e747874000048a6c81d0300001d00e2",
@@ -610,7 +610,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x06'",
+    "description": "file name contains %06",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006106632e7478740000aba147930300001d00e2",
@@ -620,7 +620,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x07'",
+    "description": "file name contains %07",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006107632e747874000035a1ed5f0300001d00e2",
@@ -630,7 +630,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x08'",
+    "description": "file name contains %08",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006108632e747874000099b3cd860300001d00e2",
@@ -640,7 +640,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\t'",
+    "description": "file name contains %09",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006109632e747874000007b3674a0300001d00e2",
@@ -650,7 +650,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\n'",
+    "description": "file name contains %0a",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700610a632e7478740000e4b4e8c40300001d00e2",
@@ -660,7 +660,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x0b'",
+    "description": "file name contains %0b",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700610b632e74787400007ab442080300001d00e2",
@@ -670,7 +670,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x0c'",
+    "description": "file name contains %0c",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700610c632e747874000063bd87020300001d00e2",
@@ -680,7 +680,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\r'",
+    "description": "file name contains %0d",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700610d632e7478740000fdbd2dce0300001d00e2",
@@ -690,7 +690,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x0e'",
+    "description": "file name contains %0e",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700610e632e74787400001ebaa2400300001d00e2",
@@ -700,7 +700,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x0f'",
+    "description": "file name contains %0f",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700610f632e747874000080ba088c0300001d00e2",
@@ -710,7 +710,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x10'",
+    "description": "file name contains %10",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006110632e7478740000079993290300001d00e2",
@@ -720,7 +720,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x11'",
+    "description": "file name contains %11",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006111632e7478740000999939e50300001d00e2",
@@ -730,7 +730,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x12'",
+    "description": "file name contains %12",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006112632e74787400007a9eb66b0300001d00e2",
@@ -740,7 +740,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x13'",
+    "description": "file name contains %13",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006113632e7478740000e49e1ca70300001d00e2",
@@ -750,7 +750,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x14'",
+    "description": "file name contains %14",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006114632e7478740000fd97d9ad0300001d00e2",
@@ -760,7 +760,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x15'",
+    "description": "file name contains %15",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006115632e7478740000639773610300001d00e2",
@@ -770,7 +770,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x16'",
+    "description": "file name contains %16",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006116632e74787400008090fcef0300001d00e2",
@@ -780,7 +780,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x17'",
+    "description": "file name contains %17",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006117632e74787400001e9056230300001d00e2",
@@ -790,7 +790,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x18'",
+    "description": "file name contains %18",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006118632e7478740000b28276fa0300001d00e2",
@@ -800,7 +800,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x19'",
+    "description": "file name contains %19",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006119632e74787400002c82dc360300001d00e2",
@@ -810,7 +810,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x1a'",
+    "description": "file name contains %1a",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700611a632e7478740000cf8553b80300001d00e2",
@@ -820,7 +820,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x1b'",
+    "description": "file name contains %1b",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700611b632e74787400005185f9740300001d00e2",
@@ -830,7 +830,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x1c'",
+    "description": "file name contains %1c",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700611c632e7478740000488c3c7e0300001d00e2",
@@ -840,7 +840,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x1d'",
+    "description": "file name contains %1d",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700611d632e7478740000d68c96b20300001d00e2",
@@ -850,7 +850,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x1e'",
+    "description": "file name contains %1e",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700611e632e7478740000358b193c0300001d00e2",
@@ -860,7 +860,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\\x1f'",
+    "description": "file name contains %1f",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700611f632e7478740000ab8bb3f00300001d00e2",
@@ -870,7 +870,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '\"'",
+    "description": "file name contains %22",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac07006122632e747874000007cd7bee0300001d00e2",
@@ -880,7 +880,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '*'",
+    "description": "file name contains %2a",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700612a632e7478740000b2d69e3d0300001d00e2",
@@ -890,7 +890,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains ':'",
+    "description": "file name contains %3a",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700613a632e747874000099e725410300001d00e2",
@@ -900,7 +900,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '<'",
+    "description": "file name contains %3c",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700613c632e74787400001eee4a870300001d00e2",
@@ -910,7 +910,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '>'",
+    "description": "file name contains %3e",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700613e632e747874000063e96fc50300001d00e2",
@@ -920,7 +920,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '?'",
+    "description": "file name contains %3f",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700613f632e7478740000fde9c5090300001d00e2",
@@ -930,7 +930,7 @@
     "error": "DataItem"
   },
   {
-    "description": "file name contains '|'",
+    "description": "file name contains %7c",
     "group": "file_name",
     "contents": [
       "bef6f09f001100eeffdcac0700617c632e7478740000f32cd7ae0300001d00e2",
@@ -996,7 +996,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '//'",
+    "description": "symlink target contains slashslash",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001300ecffdcac01c0620800612f2f632e74787471dbc00e03000017",
@@ -1006,7 +1006,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target starts with '/'",
+    "description": "symlink target starts with slash",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001100eeffdcac01c06206002f632e7478746681eac70300001700e8",
@@ -1026,7 +1026,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\'",
+    "description": "symlink target contains backslash",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001400ebffdcac01c0620900615c625c632e747874fdf6bb30030000",
@@ -1036,7 +1036,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x00'",
+    "description": "symlink target contains %00",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006100632e74787481d62f0d0300001700",
@@ -1046,7 +1046,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x01'",
+    "description": "symlink target contains %01",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006101632e747874240573c60300001700",
@@ -1056,7 +1056,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x02'",
+    "description": "symlink target contains %02",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006102632e7478748a77e7400300001700",
@@ -1066,7 +1066,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x03'",
+    "description": "symlink target contains %03",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006103632e7478742fa4bb8b0300001700",
@@ -1076,7 +1076,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x04'",
+    "description": "symlink target contains %04",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006104632e7478749794be960300001700",
@@ -1086,7 +1086,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x05'",
+    "description": "symlink target contains %05",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006105632e7478743247e25d0300001700",
@@ -1096,7 +1096,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x06'",
+    "description": "symlink target contains %06",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006106632e7478749c3576db0300001700",
@@ -1106,7 +1106,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x07'",
+    "description": "symlink target contains %07",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006107632e74787439e62a100300001700",
@@ -1116,7 +1116,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x08'",
+    "description": "symlink target contains %08",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006108632e747874ec547ce10300001700",
@@ -1126,7 +1126,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\t'",
+    "description": "symlink target contains %09",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006109632e7478744987202a0300001700",
@@ -1136,7 +1136,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\n'",
+    "description": "symlink target contains %0a",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700610a632e747874e7f5b4ac0300001700",
@@ -1146,7 +1146,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x0b'",
+    "description": "symlink target contains %0b",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700610b632e7478744226e8670300001700",
@@ -1156,7 +1156,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x0c'",
+    "description": "symlink target contains %0c",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700610c632e747874fa16ed7a0300001700",
@@ -1166,7 +1166,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\r'",
+    "description": "symlink target contains %0d",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700610d632e7478745fc5b1b10300001700",
@@ -1176,7 +1176,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x0e'",
+    "description": "symlink target contains %0e",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700610e632e747874f1b725370300001700",
@@ -1186,7 +1186,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x0f'",
+    "description": "symlink target contains %0f",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700610f632e747874546479fc0300001700",
@@ -1196,7 +1196,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x10'",
+    "description": "symlink target contains %10",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006110632e7478741ad4f90e0300001700",
@@ -1206,7 +1206,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x11'",
+    "description": "symlink target contains %11",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006111632e747874bf07a5c50300001700",
@@ -1216,7 +1216,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x12'",
+    "description": "symlink target contains %12",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006112632e747874117531430300001700",
@@ -1226,7 +1226,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x13'",
+    "description": "symlink target contains %13",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006113632e747874b4a66d880300001700",
@@ -1236,7 +1236,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x14'",
+    "description": "symlink target contains %14",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006114632e7478740c9668950300001700",
@@ -1246,7 +1246,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x15'",
+    "description": "symlink target contains %15",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006115632e747874a945345e0300001700",
@@ -1256,7 +1256,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x16'",
+    "description": "symlink target contains %16",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006116632e7478740737a0d80300001700",
@@ -1266,7 +1266,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x17'",
+    "description": "symlink target contains %17",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006117632e747874a2e4fc130300001700",
@@ -1276,7 +1276,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x18'",
+    "description": "symlink target contains %18",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006118632e7478747756aae20300001700",
@@ -1286,7 +1286,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x19'",
+    "description": "symlink target contains %19",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006119632e747874d285f6290300001700",
@@ -1296,7 +1296,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x1a'",
+    "description": "symlink target contains %1a",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700611a632e7478747cf762af0300001700",
@@ -1306,7 +1306,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x1b'",
+    "description": "symlink target contains %1b",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700611b632e747874d9243e640300001700",
@@ -1316,7 +1316,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x1c'",
+    "description": "symlink target contains %1c",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700611c632e74787461143b790300001700",
@@ -1326,7 +1326,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x1d'",
+    "description": "symlink target contains %1d",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700611d632e747874c4c767b20300001700",
@@ -1336,7 +1336,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x1e'",
+    "description": "symlink target contains %1e",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700611e632e7478746ab5f3340300001700",
@@ -1346,7 +1346,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\\x1f'",
+    "description": "symlink target contains %1f",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700611f632e747874cf66afff0300001700",
@@ -1356,7 +1356,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '\"'",
+    "description": "symlink target contains %22",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c06207006122632e747874bc724b470300001700",
@@ -1366,7 +1366,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '*'",
+    "description": "symlink target contains %2a",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700612a632e747874d1f018ab0300001700",
@@ -1376,7 +1376,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains ':'",
+    "description": "symlink target contains %3a",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700613a632e7478744af2cea80300001700",
@@ -1386,7 +1386,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '<'",
+    "description": "symlink target contains %3c",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700613c632e7478745711977e0300001700",
@@ -1396,7 +1396,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '>'",
+    "description": "symlink target contains %3e",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700613e632e7478745cb05f330300001700",
@@ -1406,7 +1406,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '?'",
+    "description": "symlink target contains %3f",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700613f632e747874f96303f80300001700",
@@ -1416,7 +1416,7 @@
     "error": "DataItem"
   },
   {
-    "description": "symlink target contains '|'",
+    "description": "symlink target contains %7c",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001200edffdcac01c0620700617c632e7478743b1bcf710300001700",
@@ -1474,7 +1474,7 @@
     ]
   },
   {
-    "description": "symlink target contains '../../..' but does not escape archive",
+    "description": "symlink target contains 3 ups but does not escape archive",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001e00e1ffdcac07c0612f622f632f620d002e2e2f2e2e2f2e2e2f62",
@@ -1490,7 +1490,7 @@
     ]
   },
   {
-    "description": "symlink target contains '../../..' and does escape archive",
+    "description": "symlink target contains 3 ups and does escape archive",
     "group": "symlink_target",
     "contents": [
       "bef6f09f001c00e3ffdcac05c0612f632f620d002e2e2f2e2e2f2e2e2f622e73",

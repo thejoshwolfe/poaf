@@ -190,7 +190,7 @@ def main():
     group = "IndexItem inconsistent with DataItem"
     ############################################################################
 
-    description = "DataItem/IndexItem file_name conflict"
+    description = "DataItem,IndexItem file_name conflict"
     data.append(Test(group, description,
         archive_from_items([
             RegularFile("a.txt", b""),
@@ -234,7 +234,7 @@ def main():
         error="IndexItem",
     ))
 
-    description = "DataItem/IndexItem file_type conflict"
+    description = "DataItem,IndexItem file_type conflict"
     data.append(Test(group, description,
         archive_from_items([
             RegularFile("a.txt", b""),
@@ -470,14 +470,14 @@ def main():
         error="DataItem",
     ))
 
-    description = "file name contains '//'"
+    description = "file name contains slashslash"
     items = [RegularFile("a//c.txt", b"")]
     data.append(Test(group, description,
         archive_from_items(items),
         error="DataItem",
     ))
 
-    description = "file name starts with '/'"
+    description = "file name starts with slash"
     items = [RegularFile("/c.txt", b"")]
     data.append(Test(group, description,
         archive_from_items(items),
@@ -491,7 +491,7 @@ def main():
         error="DataItem",
     ))
 
-    description = "file name contains '\\'"
+    description = "file name contains backslash"
     items = [RegularFile("a\\b\\c.txt", b"")]
     data.append(Test(group, description,
         archive_from_items(items),
@@ -499,7 +499,7 @@ def main():
     ))
 
     for c in "".join(chr(x) for x in range(0, 0x1f + 1)) + '"*:<>?|':
-        description = "file name contains '{}'".format(repr(c)[1:-1])
+        description = "file name contains %{}".format(hex(ord(c))[2:].zfill(2))
         items = [RegularFile("a{}c.txt".format(c), b"")]
         data.append(Test(group, description,
             archive_from_items(items),
@@ -551,14 +551,14 @@ def main():
         error="DataItem",
     ))
 
-    description = "symlink target contains '//'"
+    description = "symlink target contains slashslash"
     items = [Symlink("b", "a//c.txt")]
     data.append(Test(group, description,
         archive_from_items(items),
         error="DataItem",
     ))
 
-    description = "symlink target starts with '/'"
+    description = "symlink target starts with slash"
     items = [Symlink("b", "/c.txt")]
     data.append(Test(group, description,
         archive_from_items(items),
@@ -572,7 +572,7 @@ def main():
         error="DataItem",
     ))
 
-    description = "symlink target contains '\\'"
+    description = "symlink target contains backslash"
     items = [Symlink("b", "a\\b\\c.txt")]
     data.append(Test(group, description,
         archive_from_items(items),
@@ -580,7 +580,7 @@ def main():
     ))
 
     for c in "".join(chr(x) for x in range(0, 0x1f + 1)) + '"*:<>?|':
-        description = "symlink target contains '{}'".format(repr(c)[1:-1])
+        description = "symlink target contains %{}".format(hex(ord(c))[2:].zfill(2))
         items = [Symlink("b", "a{}c.txt".format(c))]
         data.append(Test(group, description,
             archive_from_items(items),
@@ -608,14 +608,14 @@ def main():
         items=items,
     ))
 
-    description = "symlink target contains '../../..' but does not escape archive"
+    description = "symlink target contains 3 ups but does not escape archive"
     items = [Symlink("a/b/c/b", "../../../b.sh")]
     data.append(Test(group, description,
         archive_from_items(items),
         items=items,
     ))
 
-    description = "symlink target contains '../../..' and does escape archive"
+    description = "symlink target contains 3 ups and does escape archive"
     items = [Symlink("a/c/b", "../../../b.sh")]
     data.append(Test(group, description,
         archive_from_items(items),

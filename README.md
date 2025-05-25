@@ -62,17 +62,17 @@ compressed {
         file_name
     }
 }
-ArchiveFooter // location and crc32 of the Index Region
+ArchiveFooter // location and CRC32 of the Index Region
 ```
 
 ## General Design Discussion
 
 This format is designed to be written once in a single-pass stream, and then read either as a stream or by random access.
 Random-access reading means starting with a consolidated metadata index at the end of the archive, then seeking back to selectively read individual items contents as needed.
-One of either streaming reading support or random-access reading support can be omitted from the archive to save space if the writer knows how the archive format will be read.
-The first 4 bytes of the archive encode what metadata is present in the archive.
+Streaming reading means reading the entire archive from start to finish, optionally exiting once the consolidated metadata index at the end has been reached.
+It's also possible for a streaming reader to validate the index against the data that has been found thusfar.
 
-This format performs compression with the DEFLATE algorithm, the same as gzip.
+This format performs compression with the DEFLATE algorithm, the same as ZIP, gzip, PNG, etc.
 Metadata and contents from multiple items can be combined into a single compression stream,
 resulting in compression ratios comparable to `.tar.gz` archives.
 However, the writer can strategically place breaks in the compression stream to support selective reading by random access.
@@ -86,10 +86,9 @@ This archive format prioritizes ease of implementation over optimizing compressi
 and DEFLATE was chosen because it is the most widely implemented lossless compression algorithm in the world as of 2025;
 nearly every programming language standard library supports DEFLATE compression.
 
-This format includes crc32 checksums (also widely implemented in standard libraries) to guard against subtle and accidental corruption.
+This format includes CRC32 checksums (also widely implemented in standard libraries) to guard against subtle and accidental corruption.
 Every byte of data in an archive is included in some redundancy check.
-File names, types, and contents are hashed with crc32, and the remaining special bits in the `ArchiveHeader` and `ArchiveFooter`
-are covered by bespoke checksums or parity checks.
+File names, types, and contents are hashed with CRC32, and the remaining variable bits in the `ArchiveFooter` are covered by a bespoke checksum.
 
 Note that to guard against malicious corruption, an external cryptographically secure checksum should be used on the entire archive,
 which is out of scope for this specification.
@@ -104,48 +103,33 @@ encrypt at your own risk.)
 
 Use cases that involve making incremental modifications to an existing archive file, such as appending an item, are out of scope;
 consider using a database or file system rather than an archive for those use cases.
+While the use case of writing an archive to a stream with just-in-time inputs is well supported,
+there is no simple way to resume writing an archive from an unexpected interruption, such as the writer crashing.
 
 ## Terminology
 
-An archive is a file containing 0 or more items.
+An **archive** is a file containing 0 or more items.
 The items are the primary payload of the archive.
 For example, an archive containing items named `README.md` and `LICENSE.md` would be typical for archiving a software project.
 The contents of these items would be the text of the documents.
 
-An item has a file name, a file type, and an item contents.
-A file name is a UTF-8 encoded string of bytes; see also the dedicated documentation on `file_name`.
-An item contents is a sequence of bytes.
-A byte is 8 bits.
+An **item** has a file name, a file type, and an item contents.
+A **file name** is a UTF-8 encoded string of bytes; see also the dedicated documentation on `file_name`.
+An **item contents** is a sequence of bytes.
+A **byte** is 8 bits.
 
-A file type is an integer with one of the following values. See also the dedicated documentation on `file_type`:
+A **file type** is an integer with one of the following values. See also the dedicated documentation on `file_type`:
 * `0` - normal file
 * `1` - POSIX executable file
 * `2` - empty directory
 * `3` - symlink
 
-A file is a sequence of bytes that can be accessed in some combination of the following modes:
-* streaming write
-* streaming read
-* random-access read
-
-The input to the process of writing an archive is a stream of items, and the output is an archive file accessible for streaming writing.
-There are two ways to read an archive.
-The input to the process of streaming reading an archive is an archive file accessible for streaming reading, and the output is a stream of the archive's items.
-The input to the process of random-access reading an archive is an archive file accessible for random-access reading, and the output is any subset of the archive's items in any order.
-
-While the number of items in an archive, the size of the archive, and the size of each item's contents are all unbounded,
-the amount of memory strictly required during any writing or reading operation is always bounded.
-The computational complexity analysis in this specification (when values are "bounded") considers 16-bit sizes (up to 65535 bytes) to be negligible, and 64-bit sizes (more than 65535 bytes) to be effectively unbounded.
-For example, a file name has a length up to 16383 bytes, which effectively requires worst-case constant memory to store and is not a concern,
-while an item contents with a length up to 18446744073709551615 bytes effectively requires worst-case infinite memory to store which is never required.
-
-In addition to memory, a tempfile is recommended during the writing process to assist in the creation of the Index Region.
-A tempfile is a sequence of bytes with an unbounded required size that is written once in a streaming mode, then read back once in a streaming mode.
-The required size of the tempfile scales with the number of items, not any item contents.
-The term tempfile is a suggestion hint for implementers, but could be implemented by an in-memory buffer at the implementer's discretion.
+A **file** is a sequence of bytes that can be accessed in some combination of reading and writing either random-access or streaming-only.
+The details of accessing a file are beyond the scope of the normative portion of this specification,
+however see the Implementation Guide section for a discussion of algorithmic complexity and recommendations regarding the use of a tempfile.
 
 In addition to the terms defined above, this specification also refers to the following terms defined beyond the scope of this document:
-CRC32, DEFLATE, UTF-8.
+**CRC32**, **DEFLATE**, **UTF-8**.
 See References at the end of this document for links to these definitions.
 
 ## Spec
@@ -413,13 +397,28 @@ Let `segments` be the result of splitting the link target on `/`.
 A segment may be `..` only if every prior segment, if any, is also `..`, and the total number of `..` segments does not exceed `depth`.
 This is to prevent path traversal vulnerabilities.
 
+## Implementation Guide
+
+TODO: move more non-normative stuff into this section.
+
+While the number of items in an archive, the size of the archive, and the size of each item's contents are all unbounded,
+the amount of memory strictly required during any writing or reading operation is always bounded.
+The computational complexity analysis in this specification (when values are "bounded") considers 16-bit sizes (up to 65535 bytes) to be negligible, and 64-bit sizes (more than 65535 bytes) to be effectively unbounded.
+For example, a file name has a length up to 16383 bytes, which effectively requires worst-case constant memory to store and is not a concern,
+while an item contents with a length up to 18446744073709551615 bytes effectively requires worst-case infinite memory to store which is never required.
+
+In addition to memory, a tempfile is recommended during the writing process to assist in the creation of the Index Region.
+A tempfile is a sequence of bytes with an unbounded required size that is written once in a streaming mode, then read back once in a streaming mode.
+The required size of the tempfile scales with the number of items, not any item contents.
+The term tempfile is a suggestion hint for implementers, but could be implemented by an in-memory buffer at the implementer's discretion.
+
 ## References
 
-DEFLATE: a compression algorithm invented by Phil Katz in 1990, standardized in RFC 1951 (1996) https://datatracker.ietf.org/doc/html/rfc1951
+**DEFLATE**: a compression algorithm invented by Phil Katz in 1990, standardized in RFC 1951 (1996). All poaf archives use a 32KiB window size. (Note that in a zlib context, it is considered a "raw" stream; no containers/headers. `windowBits=-15`). https://datatracker.ietf.org/doc/html/rfc1951
 
-CRC32: The standard cyclic redundancy check supported by most standard libraries. The following are the standard parameters: width=32 poly=0x04c11db7 init=0xffffffff refin=true refout=true xorout=0xffffffff check=0xcbf43926 residue=0xdebb20e3 name="CRC-32/ISO-HDLC". https://reveng.sourceforge.io/crc-catalogue/all.htm#crc.cat.crc-32-iso-hdlc
+**CRC32**: The standard cyclic redundancy check supported by most standard libraries. The following are the standard parameters: width=32 poly=0x04c11db7 init=0xffffffff refin=true refout=true xorout=0xffffffff check=0xcbf43926 residue=0xdebb20e3 name="CRC-32/ISO-HDLC". https://reveng.sourceforge.io/crc-catalogue/all.htm#crc.cat.crc-32-iso-hdlc
 
-UTF-8: The most popular variable-width encoding for text as bytes. https://datatracker.ietf.org/doc/html/rfc3629
+**UTF-8**: The most popular variable-width encoding for text as bytes. https://datatracker.ietf.org/doc/html/rfc3629
 
 
 ## Rant about the problems with ZIP files
@@ -459,7 +458,7 @@ but thankfully the problem was caught by security researchers before any known i
 
 Here are some structural ambiguities in the file format. These are real bad:
 * When searching for the eocdr (End of Central Directory Record), do you search backward from a minimum comment length or forward from a maximum comment length? If you find multiple signatures, is that an error, or is one of them authoritative? Can unused data be after the eocdr, which would make searching for the signature unbounded through the whole archive?
-* When streaming the archive through a reader, if you encounter general purpose bit 3 and compression method 0, how do you know when the file data has ended? This is explicitly supported by the specification in `4.4.4` with the phrase "newer versions of PKZIP recognize this bit for any compression method". The data descriptor, which apparently exists to solve this problem, is identified by either a signature or a crc32 of the file data contents, but that can be maliciously inserted into the file data.
+* When streaming the archive through a reader, if you encounter general purpose bit 3 and compression method 0, how do you know when the file data has ended? This is explicitly supported by the specification in `4.4.4` with the phrase "newer versions of PKZIP recognize this bit for any compression method". The data descriptor, which apparently exists to solve this problem, is identified by either a signature or a CRC32 of the file data contents, but that can be maliciously inserted into the file data.
 * What is the size of the data descriptor? `4.3.9.1` states "For ZIP64(tm) format archives, the compressed and uncompressed sizes are 8 bytes each.", but nowhere is a definitive definition of what a ZIP64 format archive is. ZIP64 is an extension that can be enabled on individual headers and/or at the very end of the central directory. If the central location is what makes an entire archive in ZIP64 format, then the data descriptor is useless for streaming readers, which according to my read of the specification is the entire purpose of the data descriptor. If instead a data descriptor has 8-byte sizes when the corresponding local file header has the ZIP64 extra field, then it means the writer of the archive would either have needed to know the size would exceed 4GiB, thereby defeating the purpose of general purpose bit 3, or pessimistically needed to prepare for that possibility and spend an extra 24 bytes in the local file header writing an effectively empty ZIP64 extra field. Is that pessimism really the recommendation of the specification?
 * When checking for ZIP64 format at the end of the central directory, a reader must check for the Zip64 End of Central Directory Locator signature `0x07064b50` 20 bytes before the eocdr. If the signature is found, then it's the start of the Zip64 End of Central Directory Locator structure. If not, then it's probably part of the last central directory header. In Windows archives, this data is part of the NTFS timestamp extra field. This means that files archived with a particular timestamp could corrupt the archive, incorrectly signaling the presence of ZIP64 structures.
 
@@ -479,13 +478,13 @@ Here are some other minor criticisms of the ZIP file format. If ZIP files weren'
 Simplified Zip:
 ```
 for each item {
-    LocalFileHeader(item) // name, size, crc32
+    LocalFileHeader(item) // name, size, CRC32
     optionally compressed {
         item.contents
     }
 }
 for each item {
-    CentralDirectoryHeader(item) // name, size, crc32, location of LocalFileHeader(item)
+    CentralDirectoryHeader(item) // name, size, CRC32, location of LocalFileHeader(item)
 }
 EndOfCentralDirectoryRecord // location of first CentralDirectoryHeader
 ```
@@ -498,11 +497,11 @@ for each item {
         item.contents
     }
     if didn't include sizes {
-        DataDescriptor(item) // sizes, crc32
+        DataDescriptor(item) // sizes, CRC32
     }
 }
 for each item {
-    CentralDirectoryHeader(item) // name, size, crc32, location of LocalFileHeader(item)
+    CentralDirectoryHeader(item) // name, size, CRC32, location of LocalFileHeader(item)
 }
 if sometimes {
     Zip64EndOfCentralDirectoryRecord // location of first CentralDirectoryHeader
@@ -522,7 +521,7 @@ for each item in unspecified order {
         }
     }
     if didn't include sizes {
-        DataDescriptor(item) // sizes, crc32
+        DataDescriptor(item) // sizes, CRC32
     }
 }
 if sometimes {
@@ -531,7 +530,7 @@ if sometimes {
 }
 (optional padding)
 for each item in unspecified order {
-    CentralDirectoryHeader(item) // name, size, crc32, location of LocalFileHeader(item)
+    CentralDirectoryHeader(item) // name, size, CRC32, location of LocalFileHeader(item)
 }
 (optional padding)
 if sometimes {
@@ -562,7 +561,7 @@ compressed {
         (alignment padding)
     }
 }
-GzipFooter // crc32 of tar
+GzipFooter // CRC32 of tar
 ```
 
 `.zip` (simplified):
