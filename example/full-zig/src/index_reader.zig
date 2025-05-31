@@ -1,6 +1,5 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const Reader = std.io.AnyReader;
 const File = std.fs.File;
 
 const FileType = @import("./common.zig").FileType;
@@ -17,10 +16,6 @@ const SliceDecompressor = std.compress.flate.Decompressor(BufferedSliceReader.Re
 pub const IndexReader = struct {
     file: File,
     file_name_buf: [16383]u8 = undefined,
-
-    data_slice_reader: SliceReader = undefined,
-    data_buffered_reader: BufferedSliceReader = undefined,
-    data_decompressor: SliceDecompressor = undefined,
 
     index_location: usize = undefined,
     index_crc32: u32 = undefined,
@@ -76,6 +71,58 @@ pub const IndexReader = struct {
         contents_crc32: u32 = undefined,
         stream_start_offset: u64 = 0,
         skip_bytes: u64 = 0,
+
+        pub fn readInfo(self: *const @This()) ReadInfo {
+            return .{
+                .stream_start_offset = self.stream_start_offset,
+                .skip_bytes = self.skip_bytes,
+                .file_size = self.file_size,
+                .contents_crc32 = self.contents_crc32,
+            };
+        }
+    };
+
+    pub const ReadInfo = struct {
+        stream_start_offset: u64,
+        skip_bytes: u64,
+        file_size: u64,
+        contents_crc32: u32,
+    };
+
+    pub const ContentsStream = struct {
+        slice_reader: SliceReader = undefined,
+        buffered_reader: BufferedSliceReader = undefined,
+        decompressor: SliceDecompressor = undefined,
+        file_size: u64 = undefined,
+        hasher: Crc32 = .init(),
+        contents_crc32: u32 = undefined,
+        remaining_in_chunk: u16 = 0,
+        last_chunk: bool = false,
+
+        pub const ReadError = SliceDecompressor.Reader.Error || error{MalformedInput};
+        pub const Reader = std.io.Reader(*@This(), ReadError, readFn);
+        pub fn reader(self: *@This()) Reader {
+            return .{ .context = self };
+        }
+        pub fn readFn(self: *@This(), buffer: []u8) ReadError!usize {
+            if (self.remaining_in_chunk == 0) {
+                // EOF checks.
+                if (self.last_chunk) {
+                    // TODO: check file_size and crc32.
+                    return 0;
+                }
+
+                // chunk_size
+                self.remaining_in_chunk = try self.decompressor.reader().readInt(u16, .little);
+                self.last_chunk = self.remaining_in_chunk < 0xffff;
+            }
+
+            // chunk
+            const slice = buffer[0..@min(self.remaining_in_chunk, buffer.len)];
+            const amt = try self.decompressor.read(slice);
+            self.remaining_in_chunk -= @intCast(amt);
+            return amt;
+        }
     };
 
     pub fn next(self: *@This()) !?Item {
@@ -124,13 +171,22 @@ pub const IndexReader = struct {
         return item;
     }
 
-    pub fn readItemContents(self: *@This(), item: *const Item, writer: anytype) !usize {
+    pub fn contentsStream(self: *@This(), info: ReadInfo, out: *ContentsStream) !void {
         // Jump into the Data Region.
-        // TODO: what now?
-        _ = self;
-        _ = item;
-        _ = writer;
-        @panic("TODO: open a stateful stream of the contents?");
+        out.slice_reader = SliceReader{
+            .source = self.file,
+            .start = info.stream_start_offset,
+            .end = self.index_location, // We don't know this is the end, but it's an upper bound.
+        };
+        out.buffered_reader = .{ .unbuffered_reader = out.slice_reader.reader() };
+        out.decompressor = std.compress.flate.decompressor(out.buffered_reader.reader());
+
+        // Skip until the start of the chunked contents we're looking for.
+        try out.decompressor.reader().skipBytes(info.skip_bytes, .{});
+
+        // We'll need these at the end.
+        out.file_size = info.file_size;
+        out.contents_crc32 = info.contents_crc32;
     }
 };
 

@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Reader = std.io.AnyReader;
+const null_writer = std.io.null_writer;
 
 const FileType = @import("./common.zig").FileType;
 const validateFileName = @import("./common.zig").validateFileName;
@@ -69,12 +70,7 @@ pub const StreamReader = struct {
 
     pub fn skipItem(self: *@This()) !void {
         // Skip the DataItem.
-        // TODO: don't put this on the stack at all. Use some kind of null writer.
-        var buf: [0xffff]u8 = undefined;
-        var ignore_me = std.io.fixedBufferStream(&buf);
-        while (0 < try self.readItemContents(ignore_me.writer())) {
-            ignore_me.seekTo(0) catch unreachable;
-        }
+        while (0 < try self.readItemContents(null_writer)) {}
     }
     pub fn readItemContents(self: *@This(), writer: anytype) !usize {
         // DataItem.chunk_size

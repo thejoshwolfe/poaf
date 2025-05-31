@@ -161,9 +161,18 @@ fn testOneCaseIndex(test_case: *const TestCase) !void {
         } else unreachable;
 
         // contents
-        var contents_buf = ArrayList(u8).init(arena.allocator());
-        while (0 < try archive.readItemContents(&found_item, contents_buf.writer())) {}
-        const found_contents = try contents_buf.toOwnedSlice();
+        const found_contents = try arena.allocator().alloc(u8, found_item.file_size);
+        var contents_stream: poaf.IndexReader.ContentsStream = .{};
+        try archive.contentsStream(found_item.readInfo(), &contents_stream);
+        try contents_stream.reader().readNoEof(found_contents);
+
+        // Ensure EOF
+        if (contents_stream.reader().readByte()) |_| {
+            return error.MalformedInput; // Expected item contents EOF.
+        } else |err| switch (err) {
+            error.EndOfStream => {}, // good
+            else => |e| return e,
+        }
 
         if (found_item.file_type == .symlink) {
             try testing.expectEqualStrings(expected_item.symlink_target.?, found_contents);

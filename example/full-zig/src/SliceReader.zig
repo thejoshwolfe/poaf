@@ -12,13 +12,13 @@ start: usize,
 end: usize,
 
 pub const ReadError = File.ReadError || File.SeekError;
-pub const Reader = std.io.Reader(*@This(), ReadError, read);
+pub const Reader = std.io.Reader(*@This(), ReadError, readFn);
 
 pub fn reader(self: *@This()) Reader {
     return .{ .context = self };
 }
 
-pub fn read(self: *@This(), buffer: []u8) ReadError!usize {
+pub fn readFn(self: *@This(), buffer: []u8) ReadError!usize {
     try self.source.seekTo(self.start);
     const len = try self.source.read(buffer[0..@min(buffer.len, self.end - self.start)]);
     self.start += len;
