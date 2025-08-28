@@ -126,7 +126,7 @@ A **file type** is an integer with one of the following values. See also the ded
 
 A **file** is a sequence of bytes that can be accessed in some combination of reading and writing either random-access or streaming-only.
 The details of accessing a file are beyond the scope of the normative portion of this specification,
-however see the Implementation Guide section for a discussion of algorithmic complexity and recommendations regarding the use of a tempfile.
+however see the Algorithmic Complexity section for some discussion regarding tempfiles.
 
 In addition to the terms defined above, this specification also refers to the following terms defined beyond the scope of this document:
 **CRC32**, **DEFLATE**, **UTF-8**.
@@ -141,13 +141,13 @@ There is never any padding or unused space between specified structures or field
 There are 4 regions to an archive:
 
 1. `ArchiveHeader`: 4 bytes, not compressed
-2. Data Region: Compressed in one or more streams, optionally includes streaming metadata
+2. Data Region: Compressed in one or more streams
 3. Index Region: Compressed separately in one stream
 4. `ArchiveFooter`: 16 bytes, not compressed
 
 An archive can be read starting with the `ArchiveHeader`, then reading through just the Data Region.
-Or an archive can be read by starting with the `ArchiveHeader`, then jumping to the `ArchiveFooter`,
-then reading the Index Region, and then any individual item contents can be read by jumping into the Data Region.
+Or an archive can be read by starting with the `ArchiveFooter`, then reading the Index Region,
+and then any individual item contents can be read by jumping into the Data Region.
 
 An archive can be written from start to finish with each item being processed one at a time.
 The length of the each item contents does not need to be known before writing the item contents to the Data Region.
@@ -155,7 +155,7 @@ The Index Region can effectively be created in parallel to the Data Region in a 
 then concatenated to the archive once the Data Region is complete.
 
 When reading an archive, it is possible to read just the `ArchiveHeader` and Data Region,
-and then predict every remaining byte in the archive, after decompression.
+and then predict every remaining byte in the archive (the Index Region and `ArchiveFooter`), after decompression.
 Any deviation from such a prediction would be a violation of the spec.
 
 ### Regions
@@ -340,7 +340,7 @@ Because the number of items in an archive is unbounded, there is no hard require
 However, during the operation of extracting an archive onto a file system, collisions can be detected by using the appropriate system call, for example:
 on POSIX, `open()` with `O_CREAT|O_EXCL` flags; on Windows, `CreateFileW()` with the `CREATE_NEW` creation disposition; etc.
 
-A reader may always reject an archive for any reason even if not explicitly permitted by this specification.
+A reader may reject an archive for any reason even if not explicitly required by this specification.
 
 Despite the disclaimers above, this specification does impose some restrictions on the `file_name` field to mitigate common and easily avoided compatibility and security issues on some systems.
 
@@ -352,7 +352,7 @@ Byte value `0x2f` (`/`) is the path delimiter.
 Let `segments` be the result of splitting `file_name` on `/`.
 
 For each `segment` in `segments`:
-* `segment` must not be empty.
+* `segment` must not be empty. (Note this forbids leading and trailing `/` as well as any occurrence of `//`.) 
 * `segment` must not be `.` or `..` (byte value `0x2e`). (See `file_type` for how symlink targets differ slightly in this rule.)
 
 This forbids non-normalized paths and path traversal vulnerabilities.
@@ -395,11 +395,9 @@ If the entire link target is `.`, it is permitted, otherwise `.` segments are no
 Let `depth` be the number of `/` bytes in the item's `file_name` (not in the link target).
 Let `segments` be the result of splitting the link target on `/`.
 A segment may be `..` only if every prior segment, if any, is also `..`, and the total number of `..` segments does not exceed `depth`.
-This is to prevent path traversal vulnerabilities.
+This is to allow symlinks targets to stay within an archive while preventing path traversal vulnerabilities.
 
-## Implementation Guide
-
-TODO: move more non-normative stuff into this section.
+## Algorithmic Complexity
 
 While the number of items in an archive, the size of the archive, and the size of each item's contents are all unbounded,
 the amount of memory strictly required during any writing or reading operation is always bounded.
@@ -433,13 +431,13 @@ The following discussion is in reference to APPNOTE version 6.3.10 timestamped N
 
 [APPNOTE.txt](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT) is an old document that has not been modernized since the early 1980s.
 The plain text format could have been a charming stylistic curiosity if it weren't for all the other long-standing problems with the document,
-which suggests the 1980s formatting is further evidence of PKWARE's unwillingness to take accountability for document's quality.
+which suggests the 1980s formatting is further evidence of PKWARE's unwillingness to take accountability for the document's quality.
 
 The use of ISO verbs ("SHALL", "MAY", etc.) is incorrect.
 For example, `4.3.8  File data` specifies that file data "SHOULD" be placed after the local file header,
 when really that's the only place for it to be, so it needn't have any ISO verb, but "SHALL" would be the appropriate one.
 I believe that whoever added the ISO verbs in version 6.3.3 in 2012 thought that "SHOULD" was how you allowed for 0-length file data arguably existing or not existing based on your philosophical beliefs, which is not appropriate for a technical specification.
-Other examples include `4.3.14.1`, `4.4.1.4`, and probably many more that I'm not going to bother enumerating; try reading the document yourself, and you'll see what I mean.
+Other examples include `4.3.14.1`, `4.4.1.4`, `4.7.1`, and probably many more that I'm not going to bother enumerating; try reading the document yourself, and you'll see what I mean.
 
 Another clue about the problems with APPNOTE is that it includes numerous advertisements for PKWARE proprietary technology with contact information for their sales department encouraging the reader to purchase a license.
 I understand that businesses have a job to do (literally) that requires earning money, and PKWARE owns the APPNOTE document
