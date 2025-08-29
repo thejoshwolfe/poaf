@@ -65,8 +65,6 @@ compressed {
 ArchiveFooter // location and CRC32 of the Index Region
 ```
 
-### poaf vs other archive formats
-
 | | `.poaf` | `.zip` | `.tar.gz` | `.7z` | `.rar` |
 | --- | --- | --- | --- | --- | --- |
 | permissive license | ✔️ | ✔️ | ✔️ | ✔️ | ❌ |
@@ -113,6 +111,8 @@ GzipFooter // CRC32 of tar
 
 ## General Design Discussion
 
+This section is non-normative.
+
 This format is designed to be written once in a single-pass stream, and then read either as a stream or by random access.
 Random-access reading means starting with a consolidated metadata index at the end of the archive, then seeking back to selectively read individual item contents as needed.
 Streaming reading means reading the entire archive from start to finish, optionally exiting once the consolidated metadata index at the end has been reached.
@@ -121,10 +121,11 @@ It's also possible for a streaming reader to validate the index against the data
 This format performs compression with the DEFLATE algorithm, the same as ZIP, gzip, PNG, etc.
 Metadata and contents from multiple items can be combined into a single compression stream,
 resulting in compression ratios comparable to `.tar.gz` archives.
-However, the writer can strategically place breaks in the compression stream to support selective reading by random access.
-This gives the best of both worlds for large items and small items.
+However unlike `.tar.gz`, the writer can strategically place breaks in the compression stream to support jumping into the middle of the archive for random access selective reading.
+This approximately gives the best of both worlds for large items and small items.
+TODO: link to benchmarks or summarize the results here.
 
-Note that the DEFLATE compression algorithm includes encoding the end of its stream.
+Note that the DEFLATE compression algorithm encodes the end of its stream.
 This is significant for parsing the structure of this archive format.
 
 There is no support for compression algorithms beyond DEFLATE.
@@ -147,35 +148,53 @@ not only does that make compression impossible at the archive level (you could c
 but it leaves archive metadata unencrypted, which is a dubious combination of secure and insecure use cases;
 encrypt at your own risk.)
 
+Cryptographic needs are subject to the constant cat-and-mouse game of innovation, and proper support would require extensibility to allow for future algorithms.
+Instead of including extensibility, poaf declares cryptographic use cases decidedly out of scope so that poaf itself can be free of extensibility and the complexity of all cryptographic algorithms.
+If you have cryptographic needs, they must be addressed outside the poaf archive format.
+
 Use cases that involve making incremental modifications to an existing archive file, such as appending an item, are out of scope;
 consider using a database or file system rather than an archive for those use cases.
 While the use case of writing an archive to a stream with just-in-time inputs is well supported,
-there is no simple way to resume writing an archive from an unexpected interruption, such as the writer crashing.
+there is no simple way to resume writing an archive from an unexpected interruption, such as the writer crashing, due to how DEFLATE compression works.
 
-This format supports symlinks and the posix executable bit because those features are generally useful.
+poaf archives that contain duplicate file names are not invalid, however such an archive is very likely to result in errors when reading.
+The allowance for duplicate file names is to relax the algorithmic complexity of archive creators;
+see the Algorithmic Complexity section for more information.
+Even if exact-match duplicates were forbidden, there are numerous ways for different UTF-8 codepoint sequences to result in collisions on some file systems.
+Reader implementations are advised to check for collisions in whatever way they determine to be appropriate.
+Fully specifying the normalization rules of current and future operating systems and file systems is beyond the scope of the poaf archive format.
+
+poaf supports symlinks and the posix executable bit because those features are generally useful.
 They are supported by git version control, and are frequently used to convey useful information when distributing a collection of files.
 
-This format does not support high resolution file system metadata.
-The last-modified timestamp has niche uses, but is more frequently in 2025 a nuisance to determinism.
-Fully specifying 9 posix permission bits instead of 1 allows users to encode permissions that are inappropriate in a portable archive.
-The distinction between user, group, and global permissions is largely up to the end user, not the author of an archive.
+This format does not support high resolution file system metadata such as timestamps.
+While the last-modified timestamp does have niche uses, is more frequently a nuisance for determinism in modern systems.
+While 9 posix permission bits are all individually useful in a user's file system, it is inappropriate to encode more than 1 in a portable archive.
+The distinction between user, group, and global permission is largely up to the end user, not the author of an archive.
 The only important information in an archive is whether a file is executable or not, similar to SVN's `svn:executable` property.
-It is inappropriate for directories or symlinks in an archive to specify permission bits.
+And it is inappropriate for directories or symlinks in an archive to specify non-standard permission bits, so poaf has no mechanism for that.
 
 This format is not extensible.
-After using TAR and ZIP for more than 3 decades, humanity can be pretty sure that what we need is an archive format that bundles multiple files together for transport through time and/or space.
-We do not need an archive format for backup/restore functionality; software suites for backup/restore use specialized formats, protocols, servers, clients, delta compression, etc. all beyond what any general-purpose archive format can accomplish.
+After using TAR and ZIP for more than 3 decades, humanity can be pretty sure that what we need is an archive format
+that bundles multiple files together for transport through time and/or space;
+we do not need an archive format for backup/restore functionality.
+Software suites for backup/restore use specialized formats, protocols, servers, clients, delta compression, etc. all beyond what any general-purpose archive format can accomplish.
 While ZIP's original design planned for future operating system use cases by allowing extensible third-party metadata,
-operating systems are out of scope for poaf's design; poaf encodes portable data.
-ZIP and TAR were invented before DEFLATE and UTF-8, and so extensibility was wise then, but innovation has plateaued in those spaces;
-innovation is mostly done, or at least good enough that we can stop planning for the future.
+consideration for future operating systems is out of scope for poaf's design;
+poaf encodes portable data, and adapting poaf data to future operating systems is a challenge independent of this archive format.
+ZIP and TAR were invented before DEFLATE and UTF-8, and so extensibility was wise at the time,
+but innovation has plateaued in those spaces;
+innovation is mostly done, or at least good enough that we can stop expecting the future to dramatically upset the status quo.
 DEFLATE is not the best compression method, but it's pretty ok.
-UTF-8 is the clear dominant winner of the character encoding madness that ended around 2010.
-CRC32 is reasonably performant and robust, not suitable for cryptographic use cases, but it's pretty ok for guarding against accidental corruption.
+UTF-8 is the clear dominant winner of the character encoding chaos that ended around 2010.
+CRC32 is reasonably performant and robust, not suitable for cryptographic use cases, but pretty ok for guarding against accidental corruption.
 poaf's design is based in a belief that we're basically done innovating in the archive format space.
+
 It's time to lock down one format that works well enough and is easy to implement everywhere.
 
 ## Terminology
+
+This section is normative.
 
 An **archive** is a file containing 0 or more items.
 The items are the primary payload of the archive.
@@ -202,6 +221,8 @@ In addition to the terms defined above, this specification also refers to the fo
 See References at the end of this document for links to these definitions.
 
 ## Spec
+
+This section is normative.
 
 All integers are unsigned and in little-endian byte order, meaning the integer 0x12345678 is encoded as the bytes 0x78 0x56 0x34 0x12.
 The existence, order, and size of every structure and field specified in this specification is normative.
@@ -474,6 +495,10 @@ The computational complexity analysis in this specification (when values are "bo
 For example, a file name has a length up to 16383 bytes, which effectively requires worst-case constant memory to store and is not a concern,
 while an item contents with a length up to 18446744073709551615 bytes effectively requires worst-case infinite memory to store which is never required.
 
+poaf archive creators are permitted to produce archives that contains duplicate file names,
+because forbidding duplicates would require keeping an in-memory representation of every file name added during the creation process,
+the number of which is unbounded.
+
 In addition to memory, a tempfile is recommended during the writing process to assist in the creation of the Index Region.
 A tempfile is a sequence of bytes with an unbounded required size that is written once in a streaming mode, then read back once in a streaming mode.
 The required size of the tempfile scales with the number of items, not any item contents.
@@ -486,7 +511,6 @@ The term tempfile is a suggestion hint for implementers, but could be implemente
 **CRC32**: The standard cyclic redundancy check supported by most standard libraries. The following are the standard parameters: width=32 poly=0x04c11db7 init=0xffffffff refin=true refout=true xorout=0xffffffff check=0xcbf43926 residue=0xdebb20e3 name="CRC-32/ISO-HDLC". https://reveng.sourceforge.io/crc-catalogue/all.htm#crc.cat.crc-32-iso-hdlc
 
 **UTF-8**: The most popular variable-width encoding for text as bytes. https://datatracker.ietf.org/doc/html/rfc3629
-
 
 ## Rant about the problems with ZIP files
 
