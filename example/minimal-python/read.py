@@ -84,7 +84,6 @@ def main():
             else: # symlink
                 symlink_target_bytes = chunk
                 validate_symlink_target(file_name_bytes, symlink_target_bytes)
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
                 os.symlink(symlink_target_bytes.decode("utf8"), dest_path)
 
             # DataItem.streaming_crc32

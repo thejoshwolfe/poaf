@@ -112,6 +112,7 @@ class Writer:
 
         # Compute jump_location and possibly split compression stream.
         # We might want to split here.
+        # TODO: can't use tell() on pipes. We need to track the bytes written ourselves.
         if self._output.tell() - self._stream_start < self.stream_split_threshold:
             # Nah, not yet.
             jump_location = 0

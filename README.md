@@ -13,7 +13,7 @@ Features:
 * Inline metadata for streaming reading
 * Consolidated metadata at the end for listing
 * DEFLATE compression for metadata and contents, optionally split strategically to allow random access
-* Redundancy for error detection (not correction) for every bit of data, mostly CRC32 checksums
+* Redundancy for error detection (not error correction) for every bit of data, mostly CRC32 checksums
 * UTF-8 for all strings
 * Implicit ancestor directories and explicit empty directories
 * Symlinks and POSIX executable bit
@@ -26,13 +26,13 @@ Non-features:
 * No support for encryption
 * No support for file metadata for backup/restore (timestamps, uig/gid, ACLs, etc.)
 * No support for obscure file types (block devices, hard links, etc.)
-* An archive containing duplicate file names is technically a valid archive, but extracting it will probably result in an error.
-* Windows reserved file names are allowed (CON, NUL, etc.).
-* This archive format is not extensible.
+* An archive containing duplicate file names is technically a valid archive, but trying to use it will probably result in an error.
+* Windows reserved file names are allowed (CON, NUL, etc.), which also might result in errors.
+* This archive format is not extensible; this isn't version 1.0; this is the only version that will ever exist, although this documentation may receive minor updates.
 
 This document is a formal specification for the archive format.
-This project also contains an example implementation in Python,
-but the implementation is informative only; this document is the normative authority.
+This project also contains example implementations,
+but the implementations are informative only; this document is the normative authority.
 
 Here is a non-normative diagram of an archive file:
 
@@ -105,6 +105,28 @@ Use cases that involve making incremental modifications to an existing archive f
 consider using a database or file system rather than an archive for those use cases.
 While the use case of writing an archive to a stream with just-in-time inputs is well supported,
 there is no simple way to resume writing an archive from an unexpected interruption, such as the writer crashing.
+
+This format supports symlinks and the posix executable bit because those features are generally useful.
+They are supported by git version control, and are frequently used to convey useful information when distributing a collection of files.
+
+This format does not support high resolution file system metadata.
+The last-modified timestamp has niche uses, but is more frequently in 2025 a nuisance to determinism.
+Fully specifying 9 posix permission bits instead of 1 allows users to encode permissions that are inappropriate in a portable archive.
+The distinction between user, group, and global permissions is largely up to the end user, not the author of an archive.
+The only important information in an archive is whether a file is executable or not, similar to SVN's `svn:executable` property.
+It is inappropriate for directories or symlinks in an archive to specify permission bits.
+
+This format is not extensible.
+After using TAR and ZIP for more than 3 decades, humanity can be pretty sure that what we need is an archive format that bundles multiple files together for transport through time and/or space.
+We do not need an archive format for backup/restore functionality; software suites for backup/restore use specialized formats, protocols, servers, clients, delta compression, etc. all beyond what any general-purpose archive format can accomplish.
+While ZIP's original design planned for future operating system use cases by allowing extensible third-party metadata,
+operating systems are out of scope for poaf's design; poaf encodes portable data.
+ZIP and TAR were invented before DEFLATE and UTF-8, and so extensibility was wise then, but innovation has plateaued in those spaces;
+innovation is mostly done, or at least good enough that we can stop planning for the future.
+DEFLATE is not the best compression method, but it's pretty ok.
+UTF-8 is the clear dominant winner of the character encoding madness that ended around 2010.
+poaf's design is based in a belief that we're basically done innovating in the archive format space.
+It's time to lock down one format that works well enough and is easy to implement everywhere.
 
 ## Terminology
 
@@ -431,8 +453,9 @@ The following discussion is in reference to APPNOTE version 6.3.10 timestamped N
 
 [APPNOTE.txt](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT) is an old document that has not been modernized since the early 1980s.
 The plain text format could have been a charming stylistic curiosity if it weren't for all the other long-standing problems with the document,
-which suggests the 1980s formatting is further evidence of PKWARE's unwillingness to take accountability for the document's quality.
+which suggest the 1980s formatting is further evidence of PKWARE's unwillingness to take accountability for the document's quality.
 
+First, some minor complaints.
 The use of ISO verbs ("SHALL", "MAY", etc.) is incorrect.
 For example, `4.3.8  File data` specifies that file data "SHOULD" be placed after the local file header,
 when really that's the only place for it to be, so it needn't have any ISO verb, but "SHALL" would be the appropriate one.
