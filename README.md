@@ -73,9 +73,9 @@ ArchiveFooter // location and CRC32 of the Index Region
 | official specification | ✔️ | ✔️ | ✔️ | ❌ | - |
 | central metadata[1] | ✔️ | ✔️ | ❌ | - | - |
 | streaming | ✔️ | ❌[2] | - | - | - |
-| modern compression | ❌ | ? | - | ✔️ | ✔️ |
-| encryption | ❌ | ? | ❌ | ✔️ | ? |
-| other fancy stuff | ❌ | ? | ❌ | ✔️ | ✔️ |
+| modern compression | ❌ | - | - | - | - |
+| encryption | ❌ | - | - | - | - |
+| other fancy stuff | ❌ | - | - | - | - |
 
 * [1] Central metadata is used for listing the contents of the archive and jumping to specific items for selective extraction. This is especially important for usecases like the `.jar` file format where individual `.class` files need to be loaded from disk into memory on demand without "extracting" the `.jar` ZIP file to disk.
 * [2] Although the ZIP format almost works for streaming reading, it doesn't due to flawed design. Furthermore, streaming writing cannot be done easily due to the crc32 field preceding the content it's derived from (unless setting general purpose bit 3). For more information, see the rant at the end of this document and/or a blog post I will write someday (TODO link).
