@@ -65,6 +65,52 @@ compressed {
 ArchiveFooter // location and CRC32 of the Index Region
 ```
 
+### poaf vs other archive formats
+
+| | `.poaf` | `.zip` | `.tar.gz` | `.7z` | `.rar` |
+| --- | --- | --- | --- | --- | --- |
+| permissive license | ✔️ | ✔️ | ✔️ | ✔️ | ❌ |
+| official specification | ✔️ | ✔️ | ✔️ | ❌ | - |
+| central metadata[1] | ✔️ | ✔️ | ❌ | - | - |
+| streaming | ✔️ | ❌[2] | - | - | - |
+| modern compression | ❌ | ? | - | ✔️ | ✔️ |
+| encryption | ❌ | ? | ❌ | ✔️ | ? |
+| other fancy stuff | ❌ | ? | ❌ | ✔️ | ✔️ |
+
+* [1] Central metadata is used for listing the contents of the archive and jumping to specific items for selective extraction. This is especially important for usecases like the `.jar` file format where individual `.class` files need to be loaded from disk into memory on demand without "extracting" the `.jar` ZIP file to disk.
+* [2] Although the ZIP format almost works for streaming reading, it doesn't due to flawed design. Furthermore, streaming writing cannot be done easily due to the crc32 field preceding the content it's derived from (unless setting general purpose bit 3). For more information, see the rant at the end of this document and/or a blog post I will write someday (TODO link).
+
+Here are rough diagrams of other archive formats for comparison:
+
+`.zip`:
+```
+for each item {
+    Metadata(item) // name, size (unreliable)
+    compressed {
+        item.contents
+    }
+}
+// Central Directory
+for each item {
+    Metadata(item) // name, size, location
+}
+Footer // backpointer to Central Directory
+```
+
+`.tar.gz`:
+```
+GzipHeader // timestamp, checksum of header
+compressed {
+    // Tar
+    for each item {
+        Header(item) // name, size
+        item.contents
+        (alignment padding)
+    }
+}
+GzipFooter // CRC32 of tar
+```
+
 ## General Design Discussion
 
 This format is designed to be written once in a single-pass stream, and then read either as a stream or by random access.
@@ -125,6 +171,7 @@ ZIP and TAR were invented before DEFLATE and UTF-8, and so extensibility was wis
 innovation is mostly done, or at least good enough that we can stop planning for the future.
 DEFLATE is not the best compression method, but it's pretty ok.
 UTF-8 is the clear dominant winner of the character encoding madness that ended around 2010.
+CRC32 is reasonably performant and robust, not suitable for cryptographic use cases, but it's pretty ok for guarding against accidental corruption.
 poaf's design is based in a belief that we're basically done innovating in the archive format space.
 It's time to lock down one format that works well enough and is easy to implement everywhere.
 
@@ -495,126 +542,3 @@ Here are some ambiguities in the specification:
 Here are some other minor criticisms of the ZIP file format. If ZIP files weren't so problematic, these would be the comparison points you'd like to see in some kind of concise table.
 * Compression and checksums only cover file contents, not file metadata.
 * The structure of an archive is so unconstrained that regions of the archive could be encoded out of order or even overlapping one another. This leads to exploits like the [zip bomb technique used by David Fifield](https://www.bamsoftware.com/hacks/zipbomb/) for extreme compression, which can be a security concern.
-
-Simplified Zip:
-```
-for each item {
-    LocalFileHeader(item) // name, size, CRC32
-    optionally compressed {
-        item.contents
-    }
-}
-for each item {
-    CentralDirectoryHeader(item) // name, size, CRC32, location of LocalFileHeader(item)
-}
-EndOfCentralDirectoryRecord // location of first CentralDirectoryHeader
-```
-
-Common Zip:
-```
-for each item {
-    LocalFileHeader(item) // name, sometimes includes sizes
-    optionall compressed {
-        item.contents
-    }
-    if didn't include sizes {
-        DataDescriptor(item) // sizes, CRC32
-    }
-}
-for each item {
-    CentralDirectoryHeader(item) // name, size, CRC32, location of LocalFileHeader(item)
-}
-if sometimes {
-    Zip64EndOfCentralDirectoryRecord // location of first CentralDirectoryHeader
-    Zip64EndOfCentralDirectoryLocator // location of Zip64EndOfCentralDirectoryRecord
-}
-EndOfCentralDirectoryRecord // sometimes location of first CentralDirectoryHeader
-```
-
-Full Madness Zip:
-```
-for each item in unspecified order {
-    (optional padding)
-    LocalFileHeader(item) // name, sometimes includes sizes
-    optionally encrypted {
-        optionally compressed {
-            item.contents
-        }
-    }
-    if didn't include sizes {
-        DataDescriptor(item) // sizes, CRC32
-    }
-}
-if sometimes {
-    ArchiveDecryptionHeader
-    ArchiveExtraDataRecord
-}
-(optional padding)
-for each item in unspecified order {
-    CentralDirectoryHeader(item) // name, size, CRC32, location of LocalFileHeader(item)
-}
-(optional padding)
-if sometimes {
-    Zip64EndOfCentralDirectoryRecord // location of first CentralDirectoryHeader
-    (optional padding)
-    Zip64EndOfCentralDirectoryLocator // location of Zip64EndOfCentralDirectoryRecord
-}
-EndOfCentralDirectoryRecord // sometimes location of first CentralDirectoryHeader
-```
-
-Tar (and also `ar`):
-```
-for each item {
-    Header(item) // name, size
-    item.contents
-    (alignment padding)
-}
-```
-
-`.tar.gz`:
-```
-GzipHeader // timestamp, checksum of header
-compressed {
-    // Tar
-    for each item {
-        Header(item) // name, size
-        item.contents
-        (alignment padding)
-    }
-}
-GzipFooter // CRC32 of tar
-```
-
-`.zip` (simplified):
-```
-for each item {
-    Metadata(item) // name, size
-    compressed {
-        item.contents
-    }
-}
-// Central Directory
-for each item {
-    Metadata(item) // name, size, location
-}
-Footer // backpointer to Central Directory
-```
-
-`.poaf` (simplified):
-```
-Header // signature
-compressed {
-    for each item {
-        Metadata(item) // name
-        (optional split in compression stream)
-        item.contents
-    }
-}
-// Index Region
-compressed {
-    for each item {
-        Metadata(item) // name, size, location
-    }
-}
-Footer // backpointer to Index Region
-```
