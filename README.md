@@ -114,7 +114,7 @@ GzipFooter // CRC32 of tar
 ## General Design Discussion
 
 This format is designed to be written once in a single-pass stream, and then read either as a stream or by random access.
-Random-access reading means starting with a consolidated metadata index at the end of the archive, then seeking back to selectively read individual items contents as needed.
+Random-access reading means starting with a consolidated metadata index at the end of the archive, then seeking back to selectively read individual item contents as needed.
 Streaming reading means reading the entire archive from start to finish, optionally exiting once the consolidated metadata index at the end has been reached.
 It's also possible for a streaming reader to validate the index against the data that has been found thusfar.
 
